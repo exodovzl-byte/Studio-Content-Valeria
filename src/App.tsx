@@ -46,6 +46,7 @@ import {
   deletePostInFirestore,
   deletePostsBatchInFirestore,
   ensureWorkspaceAndSeed,
+  refreshWorkspaceFromServer,
   reorderFeedInFirestore,
   resetDemoInFirestore,
   saveBrandToFirestore,
@@ -139,8 +140,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
-  const [authNoticeDismissed, setAuthNoticeDismissed] =
-    useState<boolean>(false);
+  const [cloudLoaded, setCloudLoaded] = useState<boolean>(false);
+  const [guestMode, setGuestMode] = useState<boolean>(false);
   const [authHint, setAuthHint] = useState<string | null>(null);
 
   // Synchronous refs so React 19 batched state updaters never lose cloud writes
@@ -168,7 +169,10 @@ export default function App() {
       setUser(nextUser);
       setAuthReady(true);
       if (nextUser) {
+        setGuestMode(false);
         setAuthHint(null);
+      } else {
+        setCloudLoaded(false);
       }
     });
     return () => unsubAuth();
@@ -180,8 +184,28 @@ export default function App() {
     let cancelled = false;
     let unsubBrands: (() => void) | null = null;
     let unsubPosts: (() => void) | null = null;
+    let brandsReady = false;
+    let postsReady = false;
+    const markReadyIfBoth = () => {
+      if (brandsReady && postsReady && !cancelled) {
+        setCloudLoaded(true);
+      }
+    };
 
-    ensureWorkspaceAndSeed(user.uid, user.displayName || 'Usuario')
+    setCloudLoaded(false);
+
+    let hasLocalPostsOverride = false;
+    try {
+      hasLocalPostsOverride = localStorage.getItem(STORAGE_POSTS_KEY) !== null;
+    } catch {
+      hasLocalPostsOverride = false;
+    }
+
+    ensureWorkspaceAndSeed(user.uid, user.displayName || 'Usuario', {
+      brands: brandsRef.current,
+      posts: postsRef.current,
+      hasLocalPostsOverride,
+    })
       .then(() => {
         if (cancelled) return;
         unsubBrands = subscribeToBrands(
@@ -192,8 +216,14 @@ export default function App() {
             );
             brandsRef.current = merged;
             setBrands(merged);
+            brandsReady = true;
+            markReadyIfBoth();
           },
-          (err) => console.error('Cloud brand sync error:', err)
+          (err) => {
+            console.error('Cloud brand sync error:', err);
+            brandsReady = true;
+            markReadyIfBoth();
+          }
         );
         unsubPosts = subscribeToPosts(
           user.uid,
@@ -203,18 +233,57 @@ export default function App() {
             );
             postsRef.current = merged;
             setPosts(merged);
+            postsReady = true;
+            markReadyIfBoth();
           },
-          (err) => console.error('Cloud post sync error:', err)
+          (err) => {
+            console.error('Cloud post sync error:', err);
+            postsReady = true;
+            markReadyIfBoth();
+          }
         );
       })
       .catch((err) => {
         if (!cancelled) {
           console.error('Cloud workspace init error:', err);
+          setAuthHint(
+            'No se pudo sincronizar el espacio con la nube. Verifica tu conexión e intenta recargar.'
+          );
+          setCloudLoaded(true);
         }
       });
 
+    // Pull latest server state whenever the user returns to the app or switches tabs
+    const handleForegroundRefresh = () => {
+      if (document.visibilityState === 'hidden' || cancelled) return;
+      if (
+        Object.keys(pendingPostSaves.current).length > 0 ||
+        Object.keys(pendingBrandSaves.current).length > 0
+      ) {
+        return;
+      }
+      refreshWorkspaceFromServer(user.uid)
+        .then(({ brands: serverBrands, posts: serverPosts }) => {
+          if (cancelled) return;
+          if (serverBrands.length > 0) {
+            brandsRef.current = serverBrands;
+            setBrands(serverBrands);
+          }
+          postsRef.current = serverPosts;
+          setPosts(serverPosts);
+        })
+        .catch(() => {
+          // Ignore transient offline refresh failures
+        });
+    };
+
+    window.addEventListener('focus', handleForegroundRefresh);
+    document.addEventListener('visibilitychange', handleForegroundRefresh);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', handleForegroundRefresh);
+      document.removeEventListener('visibilitychange', handleForegroundRefresh);
       unsubBrands?.();
       unsubPosts?.();
     };
@@ -348,7 +417,7 @@ export default function App() {
     setAuthBusy(true);
     try {
       await signOut(auth);
-      setAuthNoticeDismissed(false);
+      setGuestMode(false);
     } finally {
       setAuthBusy(false);
     }
@@ -767,6 +836,79 @@ export default function App() {
     }
   };
 
+  if (!authReady || (user && !cloudLoaded)) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-6">
+        <div className="flex items-center gap-2.5 mb-3">
+          <span className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-xs font-mono">
+            O
+          </span>
+          <span className="font-semibold text-sm tracking-tight">
+            OmniContent Studio
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-zinc-400">
+          Cargando tu espacio de trabajo...
+        </p>
+      </div>
+    );
+  }
+
+  if (!user && !guestMode) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-6">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/80 shadow-xl p-6 space-y-5">
+          <div className="flex items-center gap-2.5">
+            <span className="w-9 h-9 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-sm font-mono">
+              O
+            </span>
+            <div>
+              <h1 className="font-semibold text-base tracking-tight">
+                OmniContent Studio
+              </h1>
+              <p className="text-xs text-slate-500 dark:text-zinc-400">
+                Planificación editorial multimarca
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs leading-relaxed text-slate-600 dark:text-zinc-300">
+            Inicia sesión con la misma cuenta de Google en tu teléfono y en tu
+            PC para mantener tus marcas, piezas y cambios actualizados en tiempo
+            real.
+          </p>
+
+          {authHint && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 space-y-1.5">
+              <p>{authHint}</p>
+            </div>
+          )}
+
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={handleSignIn}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+            >
+              <LogIn className="w-4 h-4" />
+              {authBusy ? 'Conectando...' : 'Continuar con Google'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setGuestMode(true)}
+              className="w-full px-4 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800/70 transition-colors"
+            >
+              Continuar solo en este dispositivo (sin sincronizar)
+            </button>
+          </div>
+        </div>
+        <PWAStatusBanner />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
       {/* Top Navigation Bar */}
@@ -884,34 +1026,23 @@ export default function App() {
         </div>
       </header>
 
-      {/* Account Sync Prompt (shown only when not signed in so phone & PC stay linked) */}
-      {authReady && !user && !authNoticeDismissed && (
+      {/* Local-only mode reminder so user can link their account anytime */}
+      {!user && guestMode && (
         <div className="border-b border-indigo-500/20 bg-indigo-500/8 dark:bg-indigo-500/12">
           <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
             <p className="text-slate-700 dark:text-zinc-200">
-              Inicia sesión con tu cuenta de Google en tu teléfono y en tu PC
-              para ver cada modificación reflejada al instante en ambos
-              dispositivos.
+              Modo solo local activo: inicia sesión con Google para ver tus
+              cambios en tiempo real entre teléfono y PC.
             </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                disabled={authBusy}
-                onClick={handleSignIn}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                Continuar con Google
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthNoticeDismissed(true)}
-                aria-label="Cerrar aviso"
-                className="p-1 rounded hover:bg-indigo-500/15 text-slate-500 dark:text-zinc-400"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={handleSignIn}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50 shrink-0"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Continuar con Google
+            </button>
           </div>
         </div>
       )}

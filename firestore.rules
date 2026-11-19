@@ -168,7 +168,7 @@ service cloud.firestore {
 
       allow delete: if isValidId(userId)
         && isOwner(userId)
-        && existing().ownerId == request.auth.uid;
+        && (resource == null || existing().ownerId == request.auth.uid);
 
       // ==================== BRANDS SUBCOLLECTION ====================
       match /brands/{brandId} {
@@ -227,7 +227,7 @@ service cloud.firestore {
         allow delete: if isValidId(userId)
           && isValidId(brandId)
           && isOwner(userId)
-          && existing().ownerId == request.auth.uid
+          && (resource == null || existing().ownerId == request.auth.uid)
           && workspaceExists(userId);
       }
 
@@ -278,7 +278,7 @@ service cloud.firestore {
         allow delete: if isValidId(userId)
           && isValidId(postId)
           && isOwner(userId)
-          && existing().ownerId == request.auth.uid
+          && (resource == null || existing().ownerId == request.auth.uid)
           && workspaceExists(userId);
       }
     }

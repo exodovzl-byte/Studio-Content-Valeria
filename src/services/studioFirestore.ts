@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   query,
   serverTimestamp,
@@ -186,9 +187,16 @@ function buildPostFirestorePayload(
   return payload;
 }
 
+export interface LocalWorkspaceSeed {
+  brands: Brand[];
+  posts: ContentPost[];
+  hasLocalPostsOverride: boolean;
+}
+
 export async function ensureWorkspaceAndSeed(
   uid: string,
-  displayName: string
+  displayName: string,
+  localSeed?: LocalWorkspaceSeed
 ): Promise<void> {
   let isNewWorkspace = false;
   const userPath = `users/${uid}`;
@@ -208,6 +216,10 @@ export async function ensureWorkspaceAndSeed(
     handleFirestoreError(error, OperationType.WRITE, userPath);
   }
 
+  const brandsToSeed =
+    localSeed && localSeed.brands.length > 0 ? localSeed.brands : BRANDS;
+  const seededBrandIds = new Set(brandsToSeed.map((b) => b.id));
+
   const brandsPath = `users/${uid}/brands`;
   try {
     const brandsQuery = query(
@@ -217,7 +229,7 @@ export async function ensureWorkspaceAndSeed(
     const brandSnap = await getDocs(brandsQuery);
     if (brandSnap.empty) {
       const batch = writeBatch(db);
-      BRANDS.forEach((b) => {
+      brandsToSeed.forEach((b) => {
         const ref = doc(db, 'users', uid, 'brands', b.id);
         batch.set(ref, buildBrandFirestorePayload(b, uid, true));
       });
@@ -227,8 +239,15 @@ export async function ensureWorkspaceAndSeed(
     handleFirestoreError(error, OperationType.WRITE, brandsPath);
   }
 
-  // Only seed demo posts when the user workspace is created for the first time
+  // Only seed posts when the cloud workspace is created for the very first time
   if (!isNewWorkspace) return;
+
+  const postsToSeed =
+    localSeed && localSeed.hasLocalPostsOverride
+      ? localSeed.posts.filter((p) => seededBrandIds.has(p.brandId))
+      : INITIAL_POSTS.filter((p) => seededBrandIds.has(p.brandId));
+
+  if (postsToSeed.length === 0) return;
 
   const postsPath = `users/${uid}/posts`;
   try {
@@ -239,7 +258,7 @@ export async function ensureWorkspaceAndSeed(
     const postSnap = await getDocs(postsQuery);
     if (postSnap.empty) {
       const batch = writeBatch(db);
-      INITIAL_POSTS.forEach((p) => {
+      postsToSeed.forEach((p) => {
         const ref = doc(db, 'users', uid, 'posts', p.id);
         batch.set(ref, buildPostFirestorePayload(p, uid, true));
       });
@@ -248,6 +267,77 @@ export async function ensureWorkspaceAndSeed(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, postsPath);
   }
+}
+
+function mapBrandDocs(
+  docs: { id: string; data: () => Record<string, unknown> }[]
+): Brand[] {
+  const items = docs.map((d) => {
+    const raw = d.data() as unknown as Brand & { createdAt?: unknown };
+    const defaultMatch = BRANDS.find((b) => b.id === d.id);
+    const merged: Brand = defaultMatch
+      ? { ...defaultMatch, ...raw, id: d.id }
+      : {
+          id: d.id,
+          name: raw.name || 'Marca',
+          badge: raw.badge || 'MC',
+          accent: raw.accent || '#4f46e5',
+          accentLight: raw.accentLight || '#eef2ff',
+          description: raw.description || '',
+          handle: raw.handle || 'marca',
+          category: raw.category || '',
+          website: raw.website || '',
+          avatarUrl: raw.avatarUrl || '',
+          verified: Boolean(raw.verified),
+          igPostsOverride: raw.igPostsOverride || '',
+          igFollowers: raw.igFollowers || '0',
+          igFollowing: raw.igFollowing || '0',
+          showStoryRing: raw.showStoryRing !== false,
+          ttFollowing: raw.ttFollowing || '0',
+          ttFollowers: raw.ttFollowers || '0',
+          ttLikes: raw.ttLikes || '0',
+          ttShowPinned: raw.ttShowPinned !== false,
+          highlights: Array.isArray(raw.highlights) ? raw.highlights : [],
+        };
+    return {
+      brand: merged,
+      defaultIdx: DEFAULT_BRAND_ORDER.get(d.id) ?? 999,
+      createdMs: getTimestampMillis(raw.createdAt),
+    };
+  });
+
+  items.sort((a, b) => {
+    if (a.defaultIdx !== b.defaultIdx) return a.defaultIdx - b.defaultIdx;
+    if (a.createdMs !== b.createdMs) return a.createdMs - b.createdMs;
+    return a.brand.name.localeCompare(b.brand.name);
+  });
+
+  return items.map((item) => item.brand);
+}
+
+export async function refreshWorkspaceFromServer(
+  uid: string
+): Promise<{ brands: Brand[]; posts: ContentPost[] }> {
+  const brandsQuery = query(
+    collection(db, 'users', uid, 'brands'),
+    where('ownerId', '==', uid)
+  );
+  const postsQuery = query(
+    collection(db, 'users', uid, 'posts'),
+    where('ownerId', '==', uid)
+  );
+
+  const [brandSnap, postSnap] = await Promise.all([
+    getDocsFromServer(brandsQuery),
+    getDocsFromServer(postsQuery),
+  ]);
+
+  const brands = mapBrandDocs(brandSnap.docs);
+  const posts: ContentPost[] = postSnap.docs
+    .map((d) => ({ ...(d.data() as ContentPost), id: d.id }))
+    .sort((a, b) => (a.feedOrder ?? 999) - (b.feedOrder ?? 999));
+
+  return { brands, posts };
 }
 
 const DEFAULT_BRAND_ORDER = new Map(BRANDS.map((b, idx) => [b.id, idx]));

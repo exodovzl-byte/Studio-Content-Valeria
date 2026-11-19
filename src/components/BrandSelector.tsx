@@ -224,9 +224,16 @@ export function BrandSelector({
                         .toUpperCase()}
                     </span>
                   )}
-                  <span className="text-[11px] font-medium text-slate-700 dark:text-zinc-200 truncate">
-                    {accountUser.displayName || accountUser.email}
-                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium text-slate-700 dark:text-zinc-200 truncate">
+                      {accountUser.displayName || accountUser.email}
+                    </div>
+                    {accountUser.email && accountUser.displayName && (
+                      <div className="text-[10px] text-slate-400 dark:text-zinc-500 truncate">
+                        {accountUser.email}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <button
                   type="button"
