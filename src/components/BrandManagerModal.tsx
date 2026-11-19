@@ -152,18 +152,23 @@ export function BrandManagerModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby="brand-manager-title"
     >
       <div
-        className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl overflow-hidden"
+        className="w-full max-w-xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-2xl overflow-hidden pb-safe"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Mobile Sheet Handle */}
+        <div className="sm:hidden pt-2.5 pb-1 flex justify-center">
+          <span className="w-10 h-1 rounded-full bg-slate-300 dark:bg-zinc-700" />
+        </div>
+
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-200 dark:border-zinc-800">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-200 dark:border-zinc-800">
           <div>
             <h2
               id="brand-manager-title"

@@ -26,13 +26,16 @@ export function ClearContentModal({
       role="dialog"
       aria-modal="true"
       aria-label="Borrar contenido de prueba"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl space-y-4"
+        className="w-full max-w-md rounded-t-2xl sm:rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-5 pt-3 sm:pt-5 pb-5 pb-safe shadow-2xl space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
+        <div className="sm:hidden flex justify-center pb-1">
+          <span className="w-10 h-1 rounded-full bg-slate-300 dark:bg-zinc-700" />
+        </div>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">

@@ -117,15 +117,20 @@ export function ProfileEditorModal({
       role="dialog"
       aria-modal="true"
       aria-label="Personalizar perfil del feed"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-xs"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl max-h-[90vh] rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl flex flex-col overflow-hidden"
+        className="w-full max-w-2xl max-h-[93dvh] sm:max-h-[90vh] rounded-t-2xl sm:rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl flex flex-col overflow-hidden pb-safe"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Mobile Sheet Handle */}
+        <div className="sm:hidden pt-2.5 pb-1 flex justify-center">
+          <span className="w-10 h-1 rounded-full bg-slate-300 dark:bg-zinc-700" />
+        </div>
+
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-200 dark:border-zinc-800">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-slate-200 dark:border-zinc-800">
           <div>
             <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-zinc-100">
               Personalizar perfil del feed

@@ -76,7 +76,7 @@ export function BrandSelector({
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
         aria-haspopup="listbox"
-        className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-slate-50 dark:hover:bg-zinc-800/80 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50"
+        className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 min-h-[38px] rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-slate-50 dark:hover:bg-zinc-800/80 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 max-w-full"
       >
         <span
           className="w-6 h-6 rounded-md overflow-hidden flex items-center justify-center text-[11px] font-bold text-white shrink-0 font-mono"
@@ -93,7 +93,7 @@ export function BrandSelector({
             current.badge
           )}
         </span>
-        <span className="text-xs font-semibold truncate max-w-[140px] sm:max-w-[190px] whitespace-nowrap">
+        <span className="text-xs font-semibold truncate max-w-[130px] sm:max-w-[190px] whitespace-nowrap">
           {current.name}
         </span>
         <ChevronDown
@@ -106,7 +106,7 @@ export function BrandSelector({
       {open && (
         <div
           role="listbox"
-          className="absolute left-0 mt-1.5 w-76 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl z-50 p-1.5"
+          className="absolute left-0 mt-1.5 w-[min(19rem,calc(100vw-24px))] rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl z-50 p-1.5"
         >
           <div className="px-2.5 py-1.5 text-[11px] font-medium text-slate-500 dark:text-zinc-400">
             Espacios y marcas activas

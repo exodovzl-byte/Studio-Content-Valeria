@@ -1,5 +1,6 @@
 import { DragEvent, MouseEvent, useMemo, useState } from 'react';
 import {
+  ArrowUpDown,
   BadgeCheck,
   Bookmark,
   Check,
@@ -63,6 +64,7 @@ export function GridPreviewView({
   const [igTab, setIgTab] = useState<IgTab>('all');
   const [ttTab, setTtTab] = useState<TtTab>('all');
   const [copiedHandle, setCopiedHandle] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
 
   const orderedPosts = useMemo(() => {
     return [...posts].sort(
@@ -153,12 +155,12 @@ export function GridPreviewView({
       className={compact ? 'w-full' : 'max-w-[430px] mx-auto w-full'}
     >
       {/* Network Switcher Bar */}
-      <div className="flex items-center justify-between gap-2 mb-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
         <div className="inline-flex items-center bg-slate-200/75 dark:bg-zinc-900 p-0.5 rounded-lg border border-slate-200 dark:border-zinc-800">
           <button
             type="button"
             onClick={() => onChangeNetwork('Instagram')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
+            className={`px-3 py-1.5 sm:py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
               network === 'Instagram'
                 ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
                 : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200'
@@ -169,7 +171,7 @@ export function GridPreviewView({
           <button
             type="button"
             onClick={() => onChangeNetwork('TikTok')}
-            className={`px-3 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
+            className={`px-3 py-1.5 sm:py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
               network === 'TikTok'
                 ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
                 : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-200'
@@ -179,16 +181,40 @@ export function GridPreviewView({
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={onEditProfile}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
-          title="Personalizar foto, seguidores, bio y destacadas del feed"
-        >
-          <Pencil className="w-3 h-3" />
-          Editar perfil
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {visiblePosts.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setReorderMode((r) => !r)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap shrink-0 ${
+                reorderMode
+                  ? 'border-indigo-500 bg-indigo-600 text-white'
+                  : 'border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800'
+              }`}
+              title="Reordenar publicaciones del feed"
+            >
+              <ArrowUpDown className="w-3 h-3" />
+              {reorderMode ? 'Listo' : 'Ordenar'}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onEditProfile}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:py-1 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
+            title="Personalizar foto, seguidores, bio y destacadas del feed"
+          >
+            <Pencil className="w-3 h-3" />
+            <span>Editar perfil</span>
+          </button>
+        </div>
       </div>
+
+      {reorderMode && (
+        <p className="mb-2 text-[11px] text-indigo-600 dark:text-indigo-400 font-medium px-1">
+          Toca las flechas &lt; y &gt; en cada publicación para mover su posición en el feed.
+        </p>
+      )}
 
       {/* Social Mobile Preview Container */}
       <div className="rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#09090b] text-slate-900 dark:text-zinc-100 overflow-hidden shadow-sm">
@@ -229,8 +255,8 @@ export function GridPreviewView({
             </div>
 
             {/* IG Profile Header */}
-            <div className="px-4 pt-3.5 pb-3">
-              <div className="flex items-center gap-5">
+            <div className="px-3.5 sm:px-4 pt-3.5 pb-3">
+              <div className="flex items-center gap-3.5 sm:gap-5">
                 {/* Avatar with optional IG Story Ring */}
                 <button
                   type="button"
@@ -340,7 +366,7 @@ export function GridPreviewView({
 
               {/* IG Story Highlights */}
               {brand.highlights.length > 0 && (
-                <div className="mt-3.5 flex items-center gap-3 overflow-x-auto pb-0.5">
+                <div className="mt-3.5 flex items-center gap-3 overflow-x-auto no-scrollbar pb-0.5">
                   {brand.highlights.map((hl) => (
                     <button
                       key={hl.id}
@@ -484,31 +510,37 @@ export function GridPreviewView({
                         )}
                       </div>
 
-                      {/* Hover Overlay with Reorder Controls */}
-                      <div className="absolute inset-0 bg-black/65 opacity-0 group-hover:opacity-100 transition-opacity duration-150 p-1.5 flex flex-col justify-between text-white">
+                      {/* Hover / Touch Reorder Overlay */}
+                      <div
+                        className={`absolute inset-0 bg-black/65 transition-opacity duration-150 p-1.5 flex flex-col justify-between text-white ${
+                          reorderMode
+                            ? 'opacity-100'
+                            : 'opacity-0 group-hover:opacity-100'
+                        }`}
+                      >
                         <div className="flex items-center justify-between gap-1">
                           <button
                             type="button"
                             disabled={globalIdx <= 0}
                             onClick={(e) => swapAdjacent(e, post.id, -1)}
-                            className="p-0.5 rounded bg-white/20 hover:bg-white/35 disabled:opacity-25"
+                            className="p-1.5 sm:p-0.5 rounded bg-white/25 hover:bg-white/40 disabled:opacity-25"
                             title="Mover antes"
                             aria-label="Mover antes"
                           >
-                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <ChevronLeft className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
-                          <span className="text-[9px] font-mono tabular-nums opacity-85">
+                          <span className="text-[10px] sm:text-[9px] font-mono tabular-nums opacity-90">
                             #{globalIdx + 1}
                           </span>
                           <button
                             type="button"
                             disabled={globalIdx >= orderedPosts.length - 1}
                             onClick={(e) => swapAdjacent(e, post.id, 1)}
-                            className="p-0.5 rounded bg-white/20 hover:bg-white/35 disabled:opacity-25"
+                            className="p-1.5 sm:p-0.5 rounded bg-white/25 hover:bg-white/40 disabled:opacity-25"
                             title="Mover después"
                             aria-label="Mover después"
                           >
-                            <ChevronRight className="w-3.5 h-3.5" />
+                            <ChevronRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
                         </div>
                         <p className="text-[10px] font-medium line-clamp-2 leading-tight">
@@ -820,31 +852,37 @@ export function GridPreviewView({
                         </span>
                       </div>
 
-                      {/* Hover Overlay with Reorder Controls */}
-                      <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity duration-150 p-1.5 flex flex-col justify-between text-white">
+                      {/* Hover / Touch Reorder Overlay */}
+                      <div
+                        className={`absolute inset-0 bg-black/70 transition-opacity duration-150 p-1.5 flex flex-col justify-between text-white ${
+                          reorderMode
+                            ? 'opacity-100'
+                            : 'opacity-0 group-hover:opacity-100'
+                        }`}
+                      >
                         <div className="flex items-center justify-between gap-1">
                           <button
                             type="button"
                             disabled={globalIdx <= 0}
                             onClick={(e) => swapAdjacent(e, post.id, -1)}
-                            className="p-0.5 rounded bg-white/20 hover:bg-white/35 disabled:opacity-25"
+                            className="p-1.5 sm:p-0.5 rounded bg-white/25 hover:bg-white/40 disabled:opacity-25"
                             title="Mover antes"
                             aria-label="Mover antes"
                           >
-                            <ChevronLeft className="w-3.5 h-3.5" />
+                            <ChevronLeft className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
-                          <span className="text-[9px] font-mono tabular-nums opacity-85">
+                          <span className="text-[10px] sm:text-[9px] font-mono tabular-nums opacity-90">
                             #{globalIdx + 1}
                           </span>
                           <button
                             type="button"
                             disabled={globalIdx >= orderedPosts.length - 1}
                             onClick={(e) => swapAdjacent(e, post.id, 1)}
-                            className="p-0.5 rounded bg-white/20 hover:bg-white/35 disabled:opacity-25"
+                            className="p-1.5 sm:p-0.5 rounded bg-white/25 hover:bg-white/40 disabled:opacity-25"
                             title="Mover después"
                             aria-label="Mover después"
                           >
-                            <ChevronRight className="w-3.5 h-3.5" />
+                            <ChevronRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                           </button>
                         </div>
                         <p className="text-[10px] font-medium line-clamp-2 leading-tight">

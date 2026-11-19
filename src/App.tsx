@@ -856,7 +856,7 @@ export default function App() {
 
   if (!user && !guestMode) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-6">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-5 pt-safe pb-safe">
         <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/80 shadow-xl p-6 space-y-5">
           <div className="flex items-center gap-2.5">
             <span className="w-9 h-9 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-sm font-mono">
@@ -889,7 +889,7 @@ export default function App() {
               type="button"
               disabled={authBusy}
               onClick={handleSignIn}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
             >
               <LogIn className="w-4 h-4" />
               {authBusy ? 'Conectando...' : 'Continuar con Google'}
@@ -898,7 +898,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setGuestMode(true)}
-              className="w-full px-4 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800/70 transition-colors"
+              className="w-full min-h-[42px] px-4 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800/70 transition-colors"
             >
               Continuar solo en este dispositivo (sin sincronizar)
             </button>
@@ -912,11 +912,11 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-zinc-800/90 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
-          {/* Zone 1: Wordmark + Active Brand + Manage Brands */}
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-            <div className="flex items-center gap-2 shrink-0">
+      <header className="sticky top-0 z-30 pt-safe border-b border-slate-200 dark:border-zinc-800/90 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md">
+        <div className="max-w-[1600px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-3">
+          {/* Zone 1: Wordmark + Active Brand + Desktop Manage Brands */}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 md:flex-initial">
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
               <span className="w-7 h-7 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-xs font-mono">
                 O
               </span>
@@ -960,17 +960,17 @@ export default function App() {
               type="button"
               onClick={() => setBrandManagerOpen(true)}
               title="Agregar, cambiar nombre o quitar marcas"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors"
+              className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors"
             >
               <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
-              <span className="hidden md:inline">Marcas</span>
+              <span>Marcas</span>
             </button>
           </div>
 
-          {/* Zone 2: Primary View Switcher */}
+          {/* Zone 2: Primary View Switcher (Desktop md+) */}
           <nav
             aria-label="Vistas del estudio"
-            className="flex items-center bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg border border-slate-200/80 dark:border-zinc-800 shrink-0"
+            className="hidden md:flex items-center bg-slate-100 dark:bg-zinc-900 p-1 rounded-lg border border-slate-200/80 dark:border-zinc-800 shrink-0"
           >
             <button
               type="button"
@@ -982,7 +982,7 @@ export default function App() {
               }`}
             >
               <Kanban className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Kanban</span>
+              <span>Kanban</span>
             </button>
 
             <button
@@ -995,7 +995,7 @@ export default function App() {
               }`}
             >
               <Calendar className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Calendario</span>
+              <span>Calendario</span>
             </button>
 
             <button
@@ -1008,19 +1008,45 @@ export default function App() {
               }`}
             >
               <LayoutGrid className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Feed Visual</span>
+              <span>Feed Visual</span>
             </button>
           </nav>
 
-          {/* Zone 3: Primary Action */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Desktop Primary Action & Mobile Compact Header Utilities */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setBrandManagerOpen(true)}
+              title="Administrar marcas"
+              aria-label="Administrar marcas"
+              className="md:hidden inline-flex items-center justify-center min-w-[38px] min-h-[38px] rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <SlidersHorizontal className="w-4 h-4 text-indigo-500" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDarkMode((d) => !d)}
+              title={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+              aria-label={
+                darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'
+              }
+              className="md:hidden inline-flex items-center justify-center min-w-[38px] min-h-[38px] rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              {darkMode ? (
+                <Sun className="w-4 h-4" />
+              ) : (
+                <Moon className="w-4 h-4" />
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => createPost({ status: 'estrategia' })}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
+              className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Nueva Pieza</span>
+              <span>Nueva Pieza</span>
             </button>
           </div>
         </div>
@@ -1065,9 +1091,9 @@ export default function App() {
 
       {/* Workspace Control Strip */}
       <div className="border-b border-slate-200/80 dark:border-zinc-800/70 bg-white/50 dark:bg-zinc-950/60">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-[1600px] mx-auto px-3 sm:px-6 py-2 sm:py-2.5 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between gap-2 sm:gap-3">
           {/* Left: Search & Platform Filters */}
-          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-2.5 flex-1 min-w-0">
             <div className="relative w-full sm:w-64">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -1076,21 +1102,21 @@ export default function App() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Buscar pieza, copy o responsable..."
                 aria-label="Buscar piezas de contenido"
-                className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                className="w-full min-h-[38px] sm:min-h-0 pl-8 pr-8 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
                   aria-label="Limpiar búsqueda"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-zinc-200"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-zinc-200"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            <div className="flex items-center gap-1 overflow-x-auto">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
               {(['Todas', ...PLATFORMS] as const).map((pl) => {
                 const active = platformFilter === pl;
                 return (
@@ -1098,7 +1124,7 @@ export default function App() {
                     key={pl}
                     type="button"
                     onClick={() => handleSelectPlatformFilter(pl)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                    className={`px-2.5 py-1.5 sm:py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
                       active
                         ? 'bg-slate-900 text-white dark:bg-zinc-100 dark:text-zinc-950'
                         : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-200/60 dark:hover:bg-zinc-800/80'
@@ -1112,7 +1138,7 @@ export default function App() {
           </div>
 
           {/* Right: Summary + Workspace Utilities */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <div className="hidden 2xl:flex items-center gap-2 text-xs text-slate-500 dark:text-zinc-400 font-mono tabular-nums mr-1">
               <span>{allCurrentBrandPosts.length} piezas</span>
               <span aria-hidden="true">·</span>
@@ -1154,18 +1180,18 @@ export default function App() {
             <button
               type="button"
               onClick={() => setDarkMode((d) => !d)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors"
+              className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors"
               title={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
             >
               {darkMode ? (
                 <>
                   <Sun className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Claro</span>
+                  <span>Claro</span>
                 </>
               ) : (
                 <>
                   <Moon className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Oscuro</span>
+                  <span>Oscuro</span>
                 </>
               )}
             </button>
@@ -1174,7 +1200,7 @@ export default function App() {
       </div>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-4">
+      <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-3 sm:py-4 pb-24 md:pb-6">
         <div className="flex flex-col lg:flex-row gap-5 items-start">
           {/* Primary Workspace View */}
           <div className="flex-1 min-w-0 w-full">
@@ -1217,9 +1243,9 @@ export default function App() {
             )}
           </div>
 
-          {/* Sticky Side Visual Feed Preview */}
+          {/* Sticky Side Visual Feed Preview (Desktop lg+ only; mobile uses dedicated Feed tab) */}
           {activeView !== 'grid' && showSideFeed && (
-            <aside className="w-full lg:w-[340px] xl:w-[370px] shrink-0 lg:sticky lg:top-18">
+            <aside className="hidden lg:block w-full lg:w-[340px] xl:w-[370px] shrink-0 lg:sticky lg:top-18">
               <GridPreviewView
                 posts={feedPreviewPosts}
                 brand={currentBrand}
@@ -1237,6 +1263,62 @@ export default function App() {
           )}
         </div>
       </main>
+
+      {/* Fixed Mobile Bottom Navigation Bar (< md) */}
+      <nav
+        aria-label="Navegación móvil"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-slate-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md pb-safe"
+      >
+        <div className="grid grid-cols-4 h-16 px-1.5 items-center">
+          <button
+            type="button"
+            onClick={() => setActiveView('kanban')}
+            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl text-[11px] font-medium transition-colors ${
+              activeView === 'kanban'
+                ? 'text-indigo-600 dark:text-indigo-400 font-semibold'
+                : 'text-slate-500 dark:text-zinc-400'
+            }`}
+          >
+            <Kanban className="w-5 h-5" />
+            <span>Kanban</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView('calendar')}
+            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl text-[11px] font-medium transition-colors ${
+              activeView === 'calendar'
+                ? 'text-indigo-600 dark:text-indigo-400 font-semibold'
+                : 'text-slate-500 dark:text-zinc-400'
+            }`}
+          >
+            <Calendar className="w-5 h-5" />
+            <span>Calendario</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView('grid')}
+            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl text-[11px] font-medium transition-colors ${
+              activeView === 'grid'
+                ? 'text-indigo-600 dark:text-indigo-400 font-semibold'
+                : 'text-slate-500 dark:text-zinc-400'
+            }`}
+          >
+            <LayoutGrid className="w-5 h-5" />
+            <span>Feed</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => createPost({ status: 'estrategia' })}
+            className="flex flex-col items-center justify-center gap-1 h-12 rounded-xl text-[11px] font-semibold text-white bg-indigo-600 active:bg-indigo-500 mx-1 shadow-xs transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            <span>Nueva</span>
+          </button>
+        </div>
+      </nav>
 
       {/* Content Detail Modal */}
       <ContentDetailModal

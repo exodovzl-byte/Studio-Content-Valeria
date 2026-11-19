@@ -55,7 +55,7 @@ export function PWAStatusBanner() {
   }
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 sm:right-auto z-50 flex flex-col gap-2 max-w-sm">
+    <div className="fixed bottom-20 md:bottom-4 left-3 right-3 sm:left-4 sm:right-auto z-50 flex flex-col gap-2 max-w-sm">
       {updateAvailable && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-indigo-500/35 bg-white dark:bg-zinc-900 px-3.5 py-2.5 shadow-xl text-xs">
           <div className="flex items-center gap-2 text-slate-800 dark:text-zinc-100">
