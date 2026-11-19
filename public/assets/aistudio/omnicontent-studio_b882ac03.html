@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OmniContent Studio — Gestión Multimarca</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.55); }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased selection:bg-indigo-500/20 selection:text-indigo-500">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // Helper para renderizar iconos de Lucide en React
+    const Icon = ({ name, className = "w-4 h-4", strokeWidth = 1.8 }) => {
+      const ref = useRef(null);
+      useEffect(() => {
+        if (!ref.current || !window.lucide) return;
+        const kebab = name
+          .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+          .toLowerCase();
+        const iconDef = window.lucide.icons?.[kebab] || window.lucide[name];
+        if (!iconDef) {
+          ref.current.innerHTML = '';
+          return;
+        }
+        const svgEl = window.lucide.createElement(iconDef);
+        svgEl.setAttribute('class', className);
+        svgEl.setAttribute('stroke-width', String(strokeWidth));
+        ref.current.innerHTML = '';
+        ref.current.appendChild(svgEl);
+      }, [name, className, strokeWidth]);
+      return <span ref={ref} className="inline-flex items-center justify-center shrink-0" />;
+    };
+
+    // ==================== CONSTANTES Y DATOS INICIALES ====================
+    const BRANDS = [
+      {
+        id: 'exodo',
+        name: 'Éxodo - Streetwear',
+        badge: 'EX',
+        accent: '#18181b',
+        accentLight: '#f4f4f5',
+        description: 'Drop urbano, DTF/Serigrafía & Lanzamientos',
+      },
+      {
+        id: 'agape',
+        name: 'Ágape',
+        badge: 'AG',
+        accent: '#0d9488',
+        accentLight: '#f0fdfa',
+        description: 'Comunidad, Editorial & Campañas',
+      },
+      {
+        id: 'personal',
+        name: 'Personal / Otros',
+        badge: 'PO',
+        accent: '#4f46e5',
+        accentLight: '#eef2ff',
+        description: 'Proyectos Audiovisuales, Battletai & Notas',
+      },
+    ];
+
+    const KANBAN_COLUMNS = [
+      { id: 'estrategia', title: '1. Estrategia & Brief', owner: 'Estratega Manager', dot: 'bg-amber-500' },
+      { id: 'produccion', title: '2. En Producción / Diseño', owner: 'Equipo de Producción / Gráfico', dot: 'bg-purple-500' },
+      { id: 'copywriting', title: '3. Copywriting & Edición', owner: 'Content Manager', dot: 'bg-sky-500' },
+      { id: 'programado', title: '4. Programado / Aprobado', owner: 'Social Media Manager', dot: 'bg-indigo-500' },
+      { id: 'publicado', title: '5. Publicado', owner: 'Archivado / Live', dot: 'bg-emerald-500' },
+    ];
+
+    const CONTENT_TYPES = ['Reel', 'Carrusel', 'Historia', 'Lanzamiento de Producto', 'Tanda'];
+    const PLATFORMS = ['Instagram', 'TikTok', 'Web/Lanzamientos'];
+    const ASSIGNEES = ['Andrés', 'Valeria', 'Isaac', 'Diseño Éxodo'];
+
+    const PLATFORM_STYLES = {
+      Instagram: {
+        badge: 'bg-pink-500/15 text-pink-600 dark:text-pink-400 border-pink-500/30',
+        cal: 'bg-pink-500/15 text-pink-700 dark:text-pink-300 border-l-2 border-pink-500',
+        dot: 'bg-pink-500',
+      },
+      TikTok: {
+        badge: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30',
+        cal: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-l-2 border-cyan-400',
+        dot: 'bg-cyan-400',
+      },
+      'Web/Lanzamientos': {
+        badge: 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30',
+        cal: 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border-l-2 border-violet-500',
+        dot: 'bg-violet-500',
+      },
+    };
+
+    const STATUS_CAL_STYLES = {
+      estrategia: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-l-2 border-amber-500',
+      produccion: 'bg-purple-500/15 text-purple-800 dark:text-purple-300 border-l-2 border-purple-500',
+      copywriting: 'bg-sky-500/15 text-sky-800 dark:text-sky-300 border-l-2 border-sky-500',
+      programado: 'bg-indigo-500/15 text-indigo-800 dark:text-indigo-300 border-l-2 border-indigo-500',
+      publicado: 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-l-2 border-emerald-500',
+    };
+
+    const formatDateKey = (year, month, day) => {
+      const m = String(month + 1).padStart(2, '0');
+      const d = String(day).padStart(2, '0');
+      return `${year}-${m}-${d}`;
+    };
+
+    const todayObj = new Date();
+    const CUR_Y = todayObj.getFullYear();
+    const CUR_M = todayObj.getMonth();
+
+    const makeDate = (dayOffset, hour = '18:00') => {
+      const d = new Date(CUR_Y, CUR_M, Math.min(28, Math.max(1, todayObj.getDate() + dayOffset)));
+      return {
+        date: formatDateKey(d.getFullYear(), d.getMonth(), d.getDate()),
+        time: hour,
+      };
+    };
+
+    const INITIAL_POSTS = [
+      {
+        id: 'post-1',
+        brandId: 'exodo',
+        title: 'Drop 04: Heavyweight Boxy Tee — "Raíz"',
+        status: 'programado',
+        platform: 'Instagram',
+        contentType: 'Lanzamiento de Producto',
+        ...makeDate(1, '19:30'),
+        assignee: 'Andrés',
+        coverUrl: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [
+          {
+            id: 'm-1',
+            name: 'exodo_raiz_front_4k.jpg',
+            type: 'image',
+            url: 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=800&q=80',
+          },
+        ],
+        caption: 'Algodón peinado 280 GSM, corte boxy estructurado y estampa en serigrafía de alto relieve. Disponible este viernes en tienda.',
+        hashtags: '#ExodoStreetwear #StreetwearCaracas #Drop04 #HeavyweightTee #ModaUrbana',
+        cta: 'Activa el recordatorio y entra al enlace del perfil para apartar tu talla.',
+        internalNotes: 'Verificar stock de tallas XL en adelante y confirmar artes finales para DTF/serigrafía.',
+        checklist: [
+          { id: 'c-1', text: 'Aprobar arte final y separación de color', done: true },
+          { id: 'c-2', text: 'Grabar clip de detalle de costura y etiqueta', done: true },
+          { id: 'c-3', text: 'Programar en Meta Business Suite', done: false },
+        ],
+        comments: [
+          { id: 'cm-1', author: 'Valeria', text: 'El encuadre de la primera foto quedó súper limpio para el feed.', time: 'Hace 2h' },
+          { id: 'cm-2', author: 'Andrés', text: 'Listo, mañana ajustamos el horario del lanzamiento web.', time: 'Hace 45m' },
+        ],
+        feedOrder: 0,
+      },
+      {
+        id: 'post-2',
+        brandId: 'exodo',
+        title: 'Detrás de cámaras: Taller & Plotter Cameo',
+        status: 'produccion',
+        platform: 'TikTok',
+        contentType: 'Reel',
+        ...makeDate(2, '16:00'),
+        assignee: 'Diseño Éxodo',
+        coverUrl: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [
+          {
+            id: 'm-2',
+            name: 'taller_proceso_reel.jpg',
+            type: 'image',
+            url: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&w=800&q=80',
+          },
+        ],
+        caption: 'Así preparamos los stickers troquelados y pruebas de color antes de sacar una tanda completa.',
+        hashtags: '#BehindTheScenes #PrintAndCut #Exodo #ProcesoCreativo',
+        cta: 'Comenta qué diseño te gustaría ver en la próxima tanda.',
+        internalNotes: 'Mantener ritmo rápido de cortes en los primeros 3 segundos.',
+        checklist: [
+          { id: 'c-4', text: 'Grabar video vertical 9:16 en mesa de trabajo', done: true },
+          { id: 'c-5', text: 'Exportar versión limpia sin marcas de agua', done: false },
+        ],
+        comments: [
+          { id: 'cm-3', author: 'Andrés', text: 'Agreguemos un plano cerrado del corte de vinil.', time: 'Hace 3h' },
+        ],
+        feedOrder: 1,
+      },
+      {
+        id: 'post-3',
+        brandId: 'exodo',
+        title: 'Guía de fits: Boxy vs Clásico',
+        status: 'copywriting',
+        platform: 'Instagram',
+        contentType: 'Carrusel',
+        ...makeDate(4, '18:00'),
+        assignee: 'Valeria',
+        coverUrl: 'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [
+          {
+            id: 'm-3',
+            name: 'carrusel_fit_guide.jpg',
+            type: 'image',
+            url: 'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=800&q=80',
+          },
+        ],
+        caption: '¿No sabes qué talla elegir? Desglosamos caídas, largos y proporciones para que aciertes a la primera.',
+        hashtags: '#GuiaDeTallas #Streetwear #Exodo #EstiloUrbano',
+        cta: 'Guarda este carrusel antes de hacer tu pedido.',
+        internalNotes: 'Revisar coherencia con tabla de medidas actualizada.',
+        checklist: [
+          { id: 'c-6', text: 'Redactar titulares de las 6 diapositivas', done: true },
+          { id: 'c-7', text: 'Revisar ortografía y CTA final', done: false },
+        ],
+        comments: [],
+        feedOrder: 2,
+      },
+      {
+        id: 'post-4',
+        brandId: 'exodo',
+        title: 'Tanda de Stickers UV DTF — Edición Limitada',
+        status: 'estrategia',
+        platform: 'Web/Lanzamientos',
+        contentType: 'Tanda',
+        ...makeDate(6, '12:00'),
+        assignee: 'Andrés',
+        coverUrl: 'https://images.unsplash.com/photo-1513519245088-0e12902e5a38?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'Pack de stickers resistentes a agua y sol con acabado gráfico nítido.',
+        hashtags: '#Stickers #UVDTF #ExodoMerch',
+        cta: 'Pide tu pack directo en la web.',
+        internalNotes: 'Definir precio por tanda y margen de producción.',
+        checklist: [
+          { id: 'c-8', text: 'Definir selección de 8 ilustraciones vectoriales', done: false },
+          { id: 'c-9', text: 'Calcular costos por plancha', done: false },
+        ],
+        comments: [],
+        feedOrder: 3,
+      },
+      {
+        id: 'post-5',
+        brandId: 'exodo',
+        title: 'Lookbook Urbano — Sesión Tarde',
+        status: 'publicado',
+        platform: 'Instagram',
+        contentType: 'Historia',
+        ...makeDate(-2, '17:15'),
+        assignee: 'Valeria',
+        coverUrl: 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'Encuestas en historias para elegir la próxima combinación de colores.',
+        hashtags: '#ExodoLookbook #Encuesta',
+        cta: 'Vota en la encuesta y cuéntanos tu favorita.',
+        internalNotes: 'Buena tasa de respuesta en el sticker de encuesta.',
+        checklist: [
+          { id: 'c-10', text: 'Subir secuencia de 4 historias con sticker interactivo', done: true },
+        ],
+        comments: [
+          { id: 'cm-4', author: 'Valeria', text: '74% votó por el tono carbón.', time: 'Ayer' },
+        ],
+        feedOrder: 4,
+      },
+      {
+        id: 'post-6',
+        brandId: 'agape',
+        title: 'Encuentro de Cierre — Reflexión & Comunidad',
+        status: 'programado',
+        platform: 'Instagram',
+        contentType: 'Carrusel',
+        ...makeDate(3, '10:30'),
+        assignee: 'Valeria',
+        coverUrl: 'https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'Cinco ideas clave para cultivar espacios de escucha, servicio y cercanía esta semana.',
+        hashtags: '#Agape #Comunidad #Proposito #Editorial',
+        cta: 'Comparte esta publicación con alguien que necesite leerla hoy.',
+        internalNotes: 'Mantener paleta serena y tipografía editorial.',
+        checklist: [
+          { id: 'c-11', text: 'Aprobar diseño tipográfico', done: true },
+          { id: 'c-12', text: 'Programar publicación matutina', done: true },
+        ],
+        comments: [],
+        feedOrder: 0,
+      },
+      {
+        id: 'post-7',
+        brandId: 'agape',
+        title: 'Micro-relato Visual: Construir desde lo simple',
+        status: 'copywriting',
+        platform: 'TikTok',
+        contentType: 'Reel',
+        ...makeDate(5, '15:00'),
+        assignee: 'Isaac',
+        coverUrl: 'https://images.unsplash.com/photo-1499750310107-5fef28a66643?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'A veces el mayor impacto nace de constancia silenciosa y detalles bien cuidados.',
+        hashtags: '#Agape #Reflexion #Audiovisual',
+        cta: 'Déjanos una palabra en los comentarios.',
+        internalNotes: 'Ajustar mezcla de voz y música ambiental.',
+        checklist: [
+          { id: 'c-13', text: 'Grabar locución', done: true },
+          { id: 'c-14', text: 'Subtitular y exportar', done: false },
+        ],
+        comments: [],
+        feedOrder: 1,
+      },
+      {
+        id: 'post-8',
+        brandId: 'personal',
+        title: 'Flujo IA en Montaje Audiovisual — Avance',
+        status: 'produccion',
+        platform: 'Web/Lanzamientos',
+        contentType: 'Carrusel',
+        ...makeDate(2, '14:00'),
+        assignee: 'Andrés',
+        coverUrl: 'https://images.unsplash.com/photo-1574717024653-61fd311305da?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'Notas metodológicas sobre cómo integrar herramientas de IA en la preproducción y corte sin perder criterio narrativo.',
+        hashtags: '#Cine #EdicionDeVideo #IA #Audiovisual',
+        cta: 'Guarda el hilo visual para tu próximo montaje.',
+        internalNotes: 'Incluir ejemplos comparativos de tiempos de edición.',
+        checklist: [
+          { id: 'c-15', text: 'Sintetizar estructura metodológica', done: true },
+          { id: 'c-16', text: 'Diseñar láminas limpias', done: false },
+        ],
+        comments: [
+          { id: 'cm-5', author: 'Isaac', text: 'Muy claro el enfoque en criterio del montador.', time: 'Hace 1d' },
+        ],
+        feedOrder: 0,
+      },
+      {
+        id: 'post-9',
+        brandId: 'personal',
+        title: 'Actualización de Campañas & Recompensas',
+        status: 'estrategia',
+        platform: 'TikTok',
+        contentType: 'Historia',
+        ...makeDate(7, '18:30'),
+        assignee: 'Andrés',
+        coverUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80',
+        mediaType: 'image',
+        mediaItems: [],
+        caption: 'Resumen rápido de novedades de la comunidad y cómo funcionan los beneficios activos.',
+        hashtags: '#Comunidad #Actualizacion #Gaming',
+        cta: 'Revisa los detalles fijados en el perfil.',
+        internalNotes: 'Asegurar que el mensaje sea 100% preciso.',
+        checklist: [
+          { id: 'c-17', text: 'Validar puntos clave del anuncio', done: false },
+        ],
+        comments: [],
+        feedOrder: 1,
+      },
+    ];
+
+    // ==================== COMPONENTES REUTILIZABLES ====================
+
+    // 1. Selector de Marca / Proyecto Global
+    const BrandSelector = ({ brands, selectedBrandId, onSelectBrand, darkMode }) => {
+      const [open, setOpen] = useState(false);
+      const ref = useRef(null);
+      const current = brands.find((b) => b.id === selectedBrandId) || brands[0];
+
+      useEffect(() => {
+        const handleClickOutside = (e) => {
+          if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+      }, []);
+
+      return (
+        <div className="relative" ref={ref}>
+          <button
+            type="button"
+            onClick={() => setOpen((prev) => !prev)}
+            className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-slate-50 dark:hover:bg-zinc-800/80 transition text-left shadow-2xs"
+          >
+            <span
+              className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white shrink-0"
+              style={{ backgroundColor: current.accent }}
+            >
+              {current.badge}
+            </span>
+            <div className="min-w-0">
+              <div className="text-xs font-semibold truncate max-w-[155px] sm:max-w-[200px]">
+                {current.name}
+              </div>
+            </div>
+            <Icon name="ChevronDown" className={`w-3.5 h-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+
+          {open && (
+            <div className="absolute left-0 mt-1.5 w-72 rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl z-50 p-1.5">
+              <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Espacios / Marcas Activas
+              </div>
+              {brands.map((brand) => {
+                const active = brand.id === selectedBrandId;
+                return (
+                  <button
+                    key={brand.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectBrand(brand.id);
+                      setOpen(false);
+                    }}
+                    className={`w-full flex items-start gap-2.5 p-2 rounded-lg text-left transition ${
+                      active
+                        ? 'bg-slate-100 dark:bg-zinc-800'
+                        : 'hover:bg-slate-50 dark:hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <span
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5"
+                      style={{ backgroundColor: brand.accent }}
+                    >
+                      {brand.badge}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold truncate">{brand.name}</span>
+                        {active && <Icon name="Check" className="w-3.5 h-3.5 text-indigo-500 shrink-0" />}
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 truncate mt-0.5">
+                        {brand.description}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // Badge reutilizable de Plataforma
+    const PlatformBadge = ({ platform }) => {
+      const style = PLATFORM_STYLES[platform] || PLATFORM_STYLES.Instagram;
+      return (
+        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border ${style.badge}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
+          {platform}
+        </span>
+      );
+    };
+
+    // 2. Vista de Calendario Multiplataforma
+    const CalendarView = ({ posts, onSelectPost, onQuickCreate }) => {
+      const [viewDate, setViewDate] = useState(() => new Date(CUR_Y, CUR_M, 1));
+      const [colorBy, setColorBy] = useState('platform'); // 'platform' | 'status'
+      const [selectedType, setSelectedType] = useState('Todos');
+
+      const year = viewDate.getFullYear();
+      const month = viewDate.getMonth();
+
+      const monthLabel = viewDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+      const firstDayIndex = new Date(year, month, 1).getDay(); // 0 domingo
+      const mondayOffset = firstDayIndex === 0 ? 6 : firstDayIndex - 1;
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      const filteredPosts = useMemo(() => {
+        return posts.filter((p) => (selectedType === 'Todos' ? true : p.contentType === selectedType));
+      }, [posts, selectedType]);
+
+      const postsByDate = useMemo(() => {
+        const map = {};
+        filteredPosts.forEach((p) => {
+          if (!p.date) return;
+          if (!map[p.date]) map[p.date] = [];
+          map[p.date].push(p);
+        });
+        Object.keys(map).forEach((k) => {
+          map[k].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+        });
+        return map;
+      }, [filteredPosts]);
+
+      const cells = useMemo(() => {
+        const list = [];
+        for (let i = 0; i < mondayOffset; i++) list.push({ type: 'empty', key: `empty-${i}` });
+        for (let d = 1; d <= daysInMonth; d++) {
+          const key = formatDateKey(year, month, d);
+          list.push({ type: 'day', day: d, key });
+        }
+        while (list.length % 7 !== 0) {
+          list.push({ type: 'empty', key: `tail-${list.length}` });
+        }
+        return list;
+      }, [year, month, mondayOffset, daysInMonth]);
+
+      const todayKey = formatDateKey(todayObj.getFullYear(), todayObj.getMonth(), todayObj.getDate());
+      const weekDays = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+      return (
+        <div className="space-y-4">
+          {/* Barra superior del calendario */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-zinc-900/70 border border-slate-200 dark:border-zinc-800/80 rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setViewDate(new Date(year, month - 1, 1))}
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+                title="Mes anterior"
+              >
+                <Icon name="ChevronLeft" className="w-4 h-4" />
+              </button>
+              <h2 className="text-sm font-semibold capitalize min-w-[140px] text-center">{monthLabel}</h2>
+              <button
+                type="button"
+                onClick={() => setViewDate(new Date(year, month + 1, 1))}
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+                title="Mes siguiente"
+              >
+                <Icon name="ChevronRight" className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewDate(new Date(CUR_Y, CUR_M, 1))}
+                className="ml-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-200 dark:border-zinc-700 hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+              >
+                Hoy
+              </button>
+            </div>
+
+            {/* Filtros por tipo de contenido */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
+              {['Todos', ...CONTENT_TYPES].map((type) => {
+                const active = selectedType === type;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setSelectedType(type)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                      active
+                        ? 'bg-slate-900 text-white dark:bg-white dark:text-zinc-950'
+                        : 'bg-slate-100 dark:bg-zinc-800/80 text-slate-600 dark:text-zinc-300 hover:bg-slate-200/70 dark:hover:bg-zinc-700/70'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Codificación de color */}
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-zinc-800 p-1 rounded-lg self-start lg:self-auto">
+              <button
+                type="button"
+                onClick={() => setColorBy('platform')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                  colorBy === 'platform'
+                    ? 'bg-white dark:bg-zinc-900 shadow-2xs text-slate-900 dark:text-white'
+                    : 'text-slate-500 dark:text-zinc-400'
+                }`}
+              >
+                Por Plataforma
+              </button>
+              <button
+                type="button"
+                onClick={() => setColorBy('status')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                  colorBy === 'status'
+                    ? 'bg-white dark:bg-zinc-900 shadow-2xs text-slate-900 dark:text-white'
+                    : 'text-slate-500 dark:text-zinc-400'
+                }`}
+              >
+                Por Estado
+              </button>
+            </div>
+          </div>
+
+          {/* Leyenda rápida */}
+          <div className="flex flex-wrap items-center gap-4 px-1 text-[11px] text-slate-500 dark:text-zinc-400">
+            {colorBy === 'platform' ? (
+              PLATFORMS.map((pl) => (
+                <div key={pl} className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${PLATFORM_STYLES[pl].dot}`} />
+                  <span>{pl}</span>
+                </div>
+              ))
+            ) : (
+              KANBAN_COLUMNS.map((col) => (
+                <div key={col.id} className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${col.dot}`} />
+                  <span>{col.title}</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Grilla mensual */}
+          <div className="bg-white dark:bg-zinc-900/60 border border-slate-200 dark:border-zinc-800/80 rounded-2xl overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-slate-200 dark:border-zinc-800/80 bg-slate-50/80 dark:bg-zinc-900">
+              {weekDays.map((wd) => (
+                <div
+                  key={wd}
+                  className="py-2.5 px-2 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400"
+                >
+                  {wd}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 divide-x divide-y divide-slate-200/80 dark:divide-zinc-800/70">
+              {cells.map((cell) => {
+                if (cell.type === 'empty') {
+                  return <div key={cell.key} className="min-h-[116px] bg-slate-50/40 dark:bg-zinc-950/30" />;
+                }
+                const dayPosts = postsByDate[cell.key] || [];
+                const isToday = cell.key === todayKey;
+
+                return (
+                  <div
+                    key={cell.key}
+                    className={`min-h-[116px] p-1.5 flex flex-col gap-1 group transition hover:bg-slate-50/70 dark:hover:bg-zinc-800/25 ${
+                      isToday ? 'bg-indigo-500/[0.04] dark:bg-indigo-500/[0.07]' : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <span
+                        className={`text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full ${
+                          isToday
+                            ? 'bg-indigo-600 text-white font-semibold'
+                            : 'text-slate-600 dark:text-zinc-400'
+                        }`}
+                      >
+                        {cell.day}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onQuickCreate(cell.key)}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-400 hover:text-slate-700 dark:hover:text-zinc-200 transition"
+                        title="Programar en esta fecha"
+                      >
+                        <Icon name="Plus" className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1 overflow-y-auto max-h-[96px]">
+                      {dayPosts.map((post) => {
+                        const colorClass =
+                          colorBy === 'platform'
+                            ? PLATFORM_STYLES[post.platform]?.cal
+                            : STATUS_CAL_STYLES[post.status];
+                        return (
+                          <button
+                            key={post.id}
+                            type="button"
+                            onClick={() => onSelectPost(post.id)}
+                            className={`w-full text-left px-1.5 py-1 rounded text-[11px] leading-tight transition hover:brightness-95 dark:hover:brightness-110 ${colorClass}`}
+                          >
+                            <div className="flex items-center justify-between gap-1 font-medium">
+                              <span className="truncate">{post.title}</span>
+                              {post.time && (
+                                <span className="text-[10px] opacity-80 shrink-0">{post.time}</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] opacity-75 truncate mt-0.5">
+                              {post.contentType}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // 3. Tablero Kanban de Producción
+    const KanbanBoard = ({ posts, onMovePost, onSelectPost, onQuickCreateInColumn }) => {
+      const [draggedId, setDraggedId] = useState(null);
+      const [dragOverCol, setDragOverCol] = useState(null);
+
+      const handleDrop = (e, colId) => {
+        e.preventDefault();
+        const postId = e.dataTransfer.getData('text/plain') || draggedId;
+        if (postId) {
+          onMovePost(postId, colId);
+        }
+        setDraggedId(null);
+        setDragOverCol(null);
+      };
+
+      return (
+        <div className="flex gap-4 overflow-x-auto pb-4 items-start">
+          {KANBAN_COLUMNS.map((col, colIndex) => {
+            const colPosts = posts.filter((p) => p.status === col.id);
+            const isOver = dragOverCol === col.id;
+            const prevCol = colIndex > 0 ? KANBAN_COLUMNS[colIndex - 1] : null;
+            const nextCol = colIndex < KANBAN_COLUMNS.length - 1 ? KANBAN_COLUMNS[colIndex + 1] : null;
+
+            return (
+              <div
+                key={col.id}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (dragOverCol !== col.id) setDragOverCol(col.id);
+                }}
+                onDragLeave={() => setDragOverCol(null)}
+                onDrop={(e) => handleDrop(e, col.id)}
+                className={`w-80 shrink-0 rounded-2xl border transition flex flex-col max-h-[calc(100vh-195px)] ${
+                  isOver
+                    ? 'border-indigo-500 bg-indigo-500/[0.04] dark:bg-indigo-500/[0.08]'
+                    : 'border-slate-200 dark:border-zinc-800/80 bg-slate-100/70 dark:bg-zinc-900/50'
+                }`}
+              >
+                {/* Encabezado de columna */}
+                <div className="p-3 border-b border-slate-200/70 dark:border-zinc-800/70">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${col.dot}`} />
+                      <h3 className="text-xs font-semibold truncate">{col.title}</h3>
+                    </div>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-white dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 border border-slate-200/80 dark:border-zinc-700/80">
+                      {colPosts.length}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500 dark:text-zinc-400">
+                    <span className="truncate">{col.owner}</span>
+                    <button
+                      type="button"
+                      onClick={() => onQuickCreateInColumn(col.id)}
+                      className="inline-flex items-center gap-0.5 text-slate-500 hover:text-slate-900 dark:hover:text-white font-medium"
+                    >
+                      <Icon name="Plus" className="w-3 h-3" />
+                      Añadir
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tarjetas */}
+                <div className="p-2.5 space-y-2.5 overflow-y-auto flex-1">
+                  {colPosts.map((post) => {
+                    const doneCount = post.checklist?.filter((i) => i.done).length || 0;
+                    const totalCount = post.checklist?.length || 0;
+
+                    return (
+                      <div
+                        key={post.id}
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedId(post.id);
+                          e.dataTransfer.setData('text/plain', post.id);
+                        }}
+                        onDragEnd={() => {
+                          setDraggedId(null);
+                          setDragOverCol(null);
+                        }}
+                        onClick={() => onSelectPost(post.id)}
+                        className={`group rounded-xl border border-slate-200/90 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2.5 shadow-2xs hover:border-slate-300 dark:hover:border-zinc-700 transition cursor-pointer ${
+                          draggedId === post.id ? 'opacity-50 scale-[0.99]' : ''
+                        }`}
+                      >
+                        {post.coverUrl && (
+                          <div className="relative h-28 w-full rounded-lg overflow-hidden mb-2.5 bg-slate-100 dark:bg-zinc-800">
+                            <img
+                              src={post.coverUrl}
+                              alt={post.title}
+                              className="w-full h-full object-cover group-hover:scale-[1.02] transition duration-300"
+                            />
+                            <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-black/65 text-white backdrop-blur-xs">
+                              {post.contentType}
+                            </span>
+                          </div>
+                        )}
+
+                        {!post.coverUrl && (
+                          <div className="mb-1.5">
+                            <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
+                              {post.contentType}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-xs font-semibold leading-snug line-clamp-2">
+                            {post.title}
+                          </h4>
+                          <Icon
+                            name="GripVertical"
+                            className="w-3.5 h-3.5 text-slate-300 dark:text-zinc-600 shrink-0 mt-0.5"
+                          />
+                        </div>
+
+                        <div className="mt-2 flex items-center justify-between gap-1.5 flex-wrap">
+                          <PlatformBadge platform={post.platform} />
+                          {post.date && (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-zinc-400">
+                              <Icon name="Calendar" className="w-3 h-3" />
+                              {post.date.slice(5)}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-zinc-800/80 flex items-center justify-between text-[11px] text-slate-500 dark:text-zinc-400">
+                          <span className="inline-flex items-center gap-1 font-medium text-slate-700 dark:text-zinc-300">
+                            <span className="w-4 h-4 rounded-full bg-slate-200 dark:bg-zinc-700 text-[9px] font-bold flex items-center justify-center">
+                              {post.assignee?.[0] || 'A'}
+                            </span>
+                            {post.assignee}
+                          </span>
+
+                          <div className="flex items-center gap-2">
+                            {totalCount > 0 && (
+                              <span className="inline-flex items-center gap-0.5">
+                                <Icon name="CheckSquare" className="w-3 h-3" />
+                                {doneCount}/{totalCount}
+                              </span>
+                            )}
+                            {post.comments?.length > 0 && (
+                              <span className="inline-flex items-center gap-0.5">
+                                <Icon name="MessageSquare" className="w-3 h-3" />
+                                {post.comments.length}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Botones rápidos de movimiento */}
+                        <div
+                          className="mt-2 pt-1.5 border-t border-slate-100 dark:border-zinc-800/60 flex items-center justify-between opacity-80 group-hover:opacity-100 transition"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            disabled={!prevCol}
+                            onClick={() => prevCol && onMovePost(post.id, prevCol.id)}
+                            className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none"
+                            title={prevCol ? `Mover a ${prevCol.title}` : ''}
+                          >
+                            <Icon name="ArrowLeft" className="w-3 h-3" />
+                            Atrás
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!nextCol}
+                            onClick={() => nextCol && onMovePost(post.id, nextCol.id)}
+                            className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none text-indigo-600 dark:text-indigo-400"
+                            title={nextCol ? `Avanzar a ${nextCol.title}` : ''}
+                          >
+                            Avanzar
+                            <Icon name="ArrowRight" className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {colPosts.length === 0 && (
+                    <div className="py-8 text-center text-xs text-slate-400 dark:text-zinc-500 border border-dashed border-slate-200 dark:border-zinc-800 rounded-xl">
+                      Sin piezas aquí
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    // 4. Vista de Retícula / Feed Visual (Reordenable por Drag & Drop o botones)
+    const GridPreviewView = ({ posts, brand, onReorderFeed, onSelectPost, compact = false }) => {
+      const [dragId, setDragId] = useState(null);
+
+      const orderedPosts = useMemo(() => {
+        return [...posts].sort((a, b) => (a.feedOrder ?? 999) - (b.feedOrder ?? 999));
+      }, [posts]);
+
+      const handleDropOnPost = (e, targetId) => {
+        e.preventDefault();
+        const sourceId = e.dataTransfer.getData('text/plain') || dragId;
+        if (!sourceId || sourceId === targetId) return;
+        const ids = orderedPosts.map((p) => p.id);
+        const fromIdx = ids.indexOf(sourceId);
+        const toIdx = ids.indexOf(targetId);
+        if (fromIdx === -1 || toIdx === -1) return;
+        ids.splice(fromIdx, 1);
+        ids.splice(toIdx, 0, sourceId);
+        onReorderFeed(ids);
+        setDragId(null);
+      };
+
+      const swapAdjacent = (e, index, delta) => {
+        e.stopPropagation();
+        const targetIndex = index + delta;
+        if (targetIndex < 0 || targetIndex >= orderedPosts.length) return;
+        const ids = orderedPosts.map((p) => p.id);
+        const temp = ids[index];
+        ids[index] = ids[targetIndex];
+        ids[targetIndex] = temp;
+        onReorderFeed(ids);
+      };
+
+      return (
+        <div
+          className={`bg-white dark:bg-zinc-900/70 border border-slate-200 dark:border-zinc-800/80 rounded-2xl ${
+            compact ? 'p-3' : 'p-5 max-w-4xl mx-auto'
+          }`}
+        >
+          {/* Cabecera estilo perfil de Instagram */}
+          <div className="flex items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100 dark:border-zinc-800/80">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0 ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                style={{ backgroundColor: brand?.accent || '#18181b', '--tw-ring-color': brand?.accent || '#6366f1' }}
+              >
+                {brand?.badge || 'OM'}
+              </div>
+              <div>
+                <div className="text-sm font-semibold">{brand?.name || 'Feed Visual'}</div>
+                <div className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  {orderedPosts.length} publicaciones · Arrastra para curar la estética
+                </div>
+              </div>
+            </div>
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
+              <Icon name="Sparkles" className="w-3 h-3 text-indigo-500" />
+              Simulador Feed 3:4
+            </span>
+          </div>
+
+          {/* Retícula 3 columnas */}
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5">
+            {orderedPosts.map((post, idx) => (
+              <div
+                key={post.id}
+                draggable
+                onDragStart={(e) => {
+                  setDragId(post.id);
+                  e.dataTransfer.setData('text/plain', post.id);
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => handleDropOnPost(e, post.id)}
+                onClick={() => onSelectPost(post.id)}
+                className="group relative aspect-[3/4] rounded-lg overflow-hidden bg-slate-100 dark:bg-zinc-800 border border-slate-200/60 dark:border-zinc-800 cursor-grab active:cursor-grabbing"
+              >
+                {post.coverUrl ? (
+                  <img
+                    src={post.coverUrl}
+                    alt={post.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                  />
+                ) : (
+                  <div className="w-full h-full p-2.5 flex flex-col justify-between bg-gradient-to-br from-slate-100 to-slate-200 dark:from-zinc-800 dark:to-zinc-900">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      {post.contentType}
+                    </span>
+                    <p className="text-xs font-semibold line-clamp-3">{post.title}</p>
+                  </div>
+                )}
+
+                {/* Indicador superior */}
+                <div className="absolute top-1.5 right-1.5 flex items-center gap-1">
+                  <span className="px-1.5 py-0.5 rounded bg-black/60 text-white text-[9px] font-medium backdrop-blur-xs">
+                    #{idx + 1}
+                  </span>
+                </div>
+
+                {/* Overlay hover */}
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition p-2 flex flex-col justify-between text-white">
+                  <div className="flex items-center justify-between gap-1">
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={(e) => swapAdjacent(e, idx, -1)}
+                      className="p-1 rounded bg-white/15 hover:bg-white/30 disabled:opacity-25"
+                      title="Mover antes"
+                    >
+                      <Icon name="ChevronLeft" className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === orderedPosts.length - 1}
+                      onClick={(e) => swapAdjacent(e, idx, 1)}
+                      className="p-1 rounded bg-white/15 hover:bg-white/30 disabled:opacity-25"
+                      title="Mover después"
+                    >
+                      <Icon name="ChevronRight" className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold line-clamp-2 leading-snug">{post.title}</p>
+                    <p className="text-[10px] text-white/75 mt-0.5">
+                      {post.platform} · {post.contentType}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // 5. Modal de Detalle de Tarjeta / Contenido Avanzado
+    const ContentDetailModal = ({ post, onClose, onUpdatePost, onDeletePost }) => {
+      const [newTaskText, setNewTaskText] = useState('');
+      const [commentAuthor, setCommentAuthor] = useState('Andrés');
+      const [commentText, setCommentText] = useState('');
+      const fileInputRef = useRef(null);
+
+      if (!post) return null;
+
+      const handleField = (field, value) => {
+        onUpdatePost(post.id, { [field]: value });
+      };
+
+      const handleFileUpload = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        const created = files.map((file) => {
+          const url = URL.createObjectURL(file);
+          const isVideo = file.type.startsWith('video/');
+          return {
+            id: `media-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name: file.name,
+            type: isVideo ? 'video' : 'image',
+            url,
+          };
+        });
+        const nextMedia = [...(post.mediaItems || []), ...created];
+        const firstImage = nextMedia.find((m) => m.type === 'image');
+        onUpdatePost(post.id, {
+          mediaItems: nextMedia,
+          coverUrl: firstImage ? firstImage.url : post.coverUrl,
+        });
+        e.target.value = '';
+      };
+
+      const removeMedia = (mediaId) => {
+        const nextMedia = (post.mediaItems || []).filter((m) => m.id !== mediaId);
+        const firstImage = nextMedia.find((m) => m.type === 'image');
+        onUpdatePost(post.id, {
+          mediaItems: nextMedia,
+          coverUrl: firstImage ? firstImage.url : '',
+        });
+      };
+
+      const addChecklistItem = (e) => {
+        e.preventDefault();
+        if (!newTaskText.trim()) return;
+        const item = {
+          id: `chk-${Date.now()}`,
+          text: newTaskText.trim(),
+          done: false,
+        };
+        onUpdatePost(post.id, { checklist: [...(post.checklist || []), item] });
+        setNewTaskText('');
+      };
+
+      const toggleChecklistItem = (itemId) => {
+        const updated = (post.checklist || []).map((i) =>
+          i.id === itemId ? { ...i, done: !i.done } : i
+        );
+        onUpdatePost(post.id, { checklist: updated });
+      };
+
+      const deleteChecklistItem = (itemId) => {
+        const updated = (post.checklist || []).filter((i) => i.id !== itemId);
+        onUpdatePost(post.id, { checklist: updated });
+      };
+
+      const addComment = (e) => {
+        e.preventDefault();
+        if (!commentText.trim()) return;
+        const newComment = {
+          id: `cmt-${Date.now()}`,
+          author: commentAuthor,
+          text: commentText.trim(),
+          time: 'Ahora mismo',
+        };
+        onUpdatePost(post.id, { comments: [...(post.comments || []), newComment] });
+        setCommentText('');
+      };
+
+      const doneCount = post.checklist?.filter((c) => c.done).length || 0;
+      const totalCount = post.checklist?.length || 0;
+
+      return (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs"
+          onClick={onClose}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[92vh] rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Cabecera del modal */}
+            <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-200 dark:border-zinc-800">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span className="text-xs font-medium text-slate-400">Pieza:</span>
+                <input
+                  type="text"
+                  value={post.title}
+                  onChange={(e) => handleField('title', e.target.value)}
+                  className="w-full bg-transparent text-sm sm:text-base font-semibold focus:outline-none focus:bg-slate-100/70 dark:focus:bg-zinc-800/70 px-2 py-1 rounded-lg"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDeletePost(post.id);
+                    onClose();
+                  }}
+                  className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition"
+                  title="Eliminar pieza"
+                >
+                  <Icon name="Trash2" className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+                  title="Cerrar"
+                >
+                  <Icon name="X" className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Cuerpo en dos columnas */}
+            <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 dark:divide-zinc-800">
+              {/* Columna Izquierda: Copy, CTA, Hashtags, Notas y Multimedia */}
+              <div className="lg:col-span-7 p-5 space-y-5">
+                {/* Multimedia */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 flex items-center gap-1.5">
+                      <Icon name="Image" className="w-3.5 h-3.5" />
+                      Multimedia de Referencia (Imágenes, Artes, Videos)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition"
+                    >
+                      <Icon name="Upload" className="w-3.5 h-3.5" />
+                      Subir archivo
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      multiple
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    {post.coverUrl && (!post.mediaItems || post.mediaItems.length === 0) && (
+                      <div className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-800">
+                        <img src={post.coverUrl} alt="Portada" className="w-full h-full object-cover" />
+                        <span className="absolute bottom-1.5 left-1.5 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-white">
+                          Portada
+                        </span>
+                      </div>
+                    )}
+
+                    {(post.mediaItems || []).map((item) => (
+                      <div
+                        key={item.id}
+                        className="group relative aspect-square rounded-xl overflow-hidden border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-800"
+                      >
+                        {item.type === 'video' ? (
+                          <video src={item.url} controls className="w-full h-full object-cover" />
+                        ) : (
+                          <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeMedia(item.id)}
+                          className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/65 text-white opacity-0 group-hover:opacity-100 transition"
+                          title="Quitar archivo"
+                        >
+                          <Icon name="X" className="w-3 h-3" />
+                        </button>
+                        <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/75 to-transparent p-1.5 text-[10px] text-white truncate">
+                          {item.name}
+                        </div>
+                      </div>
+                    ))}
+
+                    {!post.coverUrl && (!post.mediaItems || post.mediaItems.length === 0) && (
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="col-span-2 sm:col-span-3 py-6 rounded-xl border border-dashed border-slate-300 dark:border-zinc-700 flex flex-col items-center justify-center text-xs text-slate-400 hover:border-indigo-500 hover:text-indigo-500 transition"
+                      >
+                        <Icon name="UploadCloud" className="w-5 h-5 mb-1" />
+                        Sube artes finales, fotos o clips de referencia
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Caption / Copy */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-1.5">
+                    Caption / Copy
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={post.caption || ''}
+                    onChange={(e) => handleField('caption', e.target.value)}
+                    placeholder="Escribe el copy principal de la publicación..."
+                    className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950/60 p-3 text-xs sm:text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  />
+                </div>
+
+                {/* CTA y Hashtags */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-1.5">
+                      Llamado a la Acción (CTA)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={post.cta || ''}
+                      onChange={(e) => handleField('cta', e.target.value)}
+                      placeholder="Ej. Comenta 'DROP' o visita el link..."
+                      className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950/60 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-1.5">
+                      Hashtags
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={post.hashtags || ''}
+                      onChange={(e) => handleField('hashtags', e.target.value)}
+                      placeholder="#Tag1 #Tag2 #Tag3"
+                      className="w-full rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950/60 p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    />
+                  </div>
+                </div>
+
+                {/* Notas internas de producción */}
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-1.5">
+                    Notas Internas de Producción
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={post.internalNotes || ''}
+                    onChange={(e) => handleField('internalNotes', e.target.value)}
+                    placeholder="Especificaciones técnicas, referencias de color, tiempos..."
+                    className="w-full rounded-xl border border-amber-500/30 bg-amber-500/[0.05] p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                  />
+                </div>
+              </div>
+
+              {/* Columna Derecha: Metadatos, Checklist y Comentarios */}
+              <div className="lg:col-span-5 p-5 space-y-5 bg-slate-50/50 dark:bg-zinc-950/30">
+                {/* Propiedades */}
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Etapa Kanban</label>
+                    <select
+                      value={post.status}
+                      onChange={(e) => handleField('status', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-medium"
+                    >
+                      {KANBAN_COLUMNS.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Plataforma</label>
+                    <select
+                      value={post.platform}
+                      onChange={(e) => handleField('platform', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-medium"
+                    >
+                      {PLATFORMS.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Tipo de Contenido</label>
+                    <select
+                      value={post.contentType}
+                      onChange={(e) => handleField('contentType', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-medium"
+                    >
+                      {CONTENT_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Responsable</label>
+                    <select
+                      value={post.assignee}
+                      onChange={(e) => handleField('assignee', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-medium"
+                    >
+                      {ASSIGNEES.map((a) => (
+                        <option key={a} value={a}>
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Fecha Límite</label>
+                    <input
+                      type="date"
+                      value={post.date || ''}
+                      onChange={(e) => handleField('date', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-500 dark:text-zinc-400 mb-1">Hora</label>
+                    <input
+                      type="time"
+                      value={post.time || '18:00'}
+                      onChange={(e) => handleField('time', e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5"
+                    />
+                  </div>
+                </div>
+
+                {/* Checklist de Subtareas */}
+                <div className="pt-2 border-t border-slate-200/80 dark:border-zinc-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">
+                      Checklist de Subtareas
+                    </span>
+                    <span className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                      {doneCount}/{totalCount}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 mb-2.5">
+                    {(post.checklist || []).map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 text-xs bg-white dark:bg-zinc-900 px-2.5 py-1.5 rounded-lg border border-slate-200/70 dark:border-zinc-800"
+                      >
+                        <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={item.done}
+                            onChange={() => toggleChecklistItem(item.id)}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span className={item.done ? 'line-through text-slate-400' : 'truncate'}>
+                            {item.text}
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => deleteChecklistItem(item.id)}
+                          className="text-slate-400 hover:text-rose-500"
+                        >
+                          <Icon name="X" className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <form onSubmit={addChecklistItem} className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={newTaskText}
+                      onChange={(e) => setNewTaskText(e.target.value)}
+                      placeholder="Nueva subtarea (ej. Programar en Meta Business Suite)..."
+                      className="flex-1 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    />
+                    <button
+                      type="submit"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 text-xs font-medium hover:opacity-90"
+                    >
+                      Añadir
+                    </button>
+                  </form>
+                </div>
+
+                {/* Comentarios y actividad del equipo */}
+                <div className="pt-2 border-t border-slate-200/80 dark:border-zinc-800">
+                  <span className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-2">
+                    Comentarios del Equipo
+                  </span>
+
+                  <div className="space-y-2 max-h-44 overflow-y-auto mb-2.5">
+                    {(post.comments || []).map((c) => (
+                      <div
+                        key={c.id}
+                        className="rounded-xl bg-white dark:bg-zinc-900 border border-slate-200/70 dark:border-zinc-800 p-2.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-semibold text-slate-800 dark:text-zinc-200">
+                            {c.author}
+                          </span>
+                          <span className="text-[10px] text-slate-400">{c.time}</span>
+                        </div>
+                        <p className="text-slate-600 dark:text-zinc-300 leading-snug">{c.text}</p>
+                      </div>
+                    ))}
+                    {(!post.comments || post.comments.length === 0) && (
+                      <p className="text-[11px] text-slate-400 italic">Sin comentarios aún.</p>
+                    )}
+                  </div>
+
+                  <form onSubmit={addComment} className="space-y-1.5">
+                    <div className="flex gap-1.5">
+                      <select
+                        value={commentAuthor}
+                        onChange={(e) => setCommentAuthor(e.target.value)}
+                        className="rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2 py-1.5 text-xs font-medium"
+                      >
+                        {ASSIGNEES.map((a) => (
+                          <option key={a} value={a}>
+                            {a}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={commentText}
+                        onChange={(e) => setCommentText(e.target.value)}
+                        placeholder="Escribir nota o actualización..."
+                        className="flex-1 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      />
+                      <button
+                        type="submit"
+                        className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium"
+                      >
+                        Enviar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ==================== APLICACIÓN PRINCIPAL ====================
+    function App() {
+      const [darkMode, setDarkMode] = useState(true);
+      const [selectedBrandId, setSelectedBrandId] = useState('exodo');
+      const [activeView, setActiveView] = useState('kanban'); // 'kanban' | 'calendar' | 'grid'
+      const [showSideFeed, setShowSideFeed] = useState(true);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [posts, setPosts] = useState(INITIAL_POSTS);
+      const [selectedPostId, setSelectedPostId] = useState(null);
+
+      useEffect(() => {
+        const root = document.documentElement;
+        if (darkMode) root.classList.add('dark');
+        else root.classList.remove('dark');
+      }, [darkMode]);
+
+      const currentBrand = useMemo(
+        () => BRANDS.find((b) => b.id === selectedBrandId) || BRANDS[0],
+        [selectedBrandId]
+      );
+
+      const brandPosts = useMemo(() => {
+        return posts.filter((p) => {
+          if (p.brandId !== selectedBrandId) return false;
+          if (!searchQuery.trim()) return true;
+          const q = searchQuery.toLowerCase();
+          return (
+            p.title.toLowerCase().includes(q) ||
+            (p.caption || '').toLowerCase().includes(q) ||
+            (p.assignee || '').toLowerCase().includes(q) ||
+            (p.contentType || '').toLowerCase().includes(q)
+          );
+        });
+      }, [posts, selectedBrandId, searchQuery]);
+
+      const selectedPost = useMemo(
+        () => posts.find((p) => p.id === selectedPostId) || null,
+        [posts, selectedPostId]
+      );
+
+      const createPost = ({ status = 'estrategia', date = formatDateKey(CUR_Y, CUR_M, todayObj.getDate()) } = {}) => {
+        const brandItems = posts.filter((p) => p.brandId === selectedBrandId);
+        const newId = `post-${Date.now()}`;
+        const created = {
+          id: newId,
+          brandId: selectedBrandId,
+          title: 'Nueva pieza de contenido',
+          status,
+          platform: 'Instagram',
+          contentType: 'Reel',
+          date,
+          time: '18:00',
+          assignee: 'Andrés',
+          coverUrl: '',
+          mediaType: 'image',
+          mediaItems: [],
+          caption: '',
+          hashtags: '',
+          cta: '',
+          internalNotes: '',
+          checklist: [
+            { id: `chk-${Date.now()}-1`, text: 'Definir guion y enfoque visual', done: false },
+            { id: `chk-${Date.now()}-2`, text: 'Aprobar pieza final', done: false },
+          ],
+          comments: [],
+          feedOrder: brandItems.length,
+        };
+        setPosts((prev) => [created, ...prev]);
+        setSelectedPostId(newId);
+      };
+
+      const updatePost = (postId, patch) => {
+        setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, ...patch } : p)));
+      };
+
+      const deletePost = (postId) => {
+        setPosts((prev) => prev.filter((p) => p.id !== postId));
+        if (selectedPostId === postId) setSelectedPostId(null);
+      };
+
+      const reorderFeed = (orderedIds) => {
+        setPosts((prev) =>
+          prev.map((p) => {
+            const idx = orderedIds.indexOf(p.id);
+            return idx !== -1 ? { ...p, feedOrder: idx } : p;
+          })
+        );
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
+          {/* Barra Superior */}
+          <header className="sticky top-0 z-30 border-b border-slate-200/80 dark:border-zinc-800/80 bg-white/85 dark:bg-zinc-950/85 backdrop-blur-md">
+            <div className="max-w-[1600px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2.5">
+              {/* Izquierda: Logo + Selector de Marca */}
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-sm">
+                    O
+                  </div>
+                  <span className="font-semibold text-sm tracking-tight hidden md:inline">
+                    OmniContent <span className="text-slate-400 font-normal">Studio</span>
+                  </span>
+                </div>
+
+                <span className="h-4 w-px bg-slate-200 dark:bg-zinc-800 hidden sm:inline" />
+
+                <BrandSelector
+                  brands={BRANDS}
+                  selectedBrandId={selectedBrandId}
+                  onSelectBrand={setSelectedBrandId}
+                  darkMode={darkMode}
+                />
+              </div>
+
+              {/* Centro: Selector de Vistas */}
+              <nav className="flex items-center bg-slate-100 dark:bg-zinc-900 p-1 rounded-xl border border-slate-200/70 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setActiveView('kanban')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition ${
+                    activeView === 'kanban'
+                      ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                      : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  <Icon name="Kanban" className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Kanban</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveView('calendar')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition ${
+                    activeView === 'calendar'
+                      ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                      : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  <Icon name="Calendar" className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Calendario</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveView('grid')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition ${
+                    activeView === 'grid'
+                      ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                      : 'text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  <Icon name="LayoutGrid" className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Feed Visual</span>
+                </button>
+              </nav>
+
+              {/* Derecha: Buscador, Feed Lateral, Tema y Nueva Pieza */}
+              <div className="flex items-center gap-2">
+                <div className="relative hidden xl:block w-52">
+                  <Icon
+                    name="Search"
+                    className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2"
+                  />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar pieza o responsable..."
+                    className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  />
+                </div>
+
+                {activeView !== 'grid' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowSideFeed((s) => !s)}
+                    className={`hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      showSideFeed
+                        ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400'
+                        : 'border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-300'
+                    }`}
+                    title="Alternar simulador de feed lateral"
+                  >
+                    <Icon name="PanelRight" className="w-3.5 h-3.5" />
+                    Feed
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setDarkMode((d) => !d)}
+                  className="p-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+                  title={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+                >
+                  <Icon name={darkMode ? 'Sun' : 'Moon'} className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => createPost({ status: 'estrategia' })}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-2xs transition"
+                >
+                  <Icon name="Plus" className="w-3.5 h-3.5" />
+                  <span>Nueva Pieza</span>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Contenido Principal */}
+          <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4">
+            <div className="flex flex-col lg:flex-row gap-5 items-start">
+              {/* Área principal de trabajo */}
+              <div className="flex-1 min-w-0 w-full">
+                {activeView === 'kanban' && (
+                  <KanbanBoard
+                    posts={brandPosts}
+                    onMovePost={(postId, nextStatus) => updatePost(postId, { status: nextStatus })}
+                    onSelectPost={(postId) => setSelectedPostId(postId)}
+                    onQuickCreateInColumn={(colId) => createPost({ status: colId })}
+                  />
+                )}
+
+                {activeView === 'calendar' && (
+                  <CalendarView
+                    posts={brandPosts}
+                    onSelectPost={(postId) => setSelectedPostId(postId)}
+                    onQuickCreate={(dateStr) => createPost({ status: 'programado', date: dateStr })}
+                  />
+                )}
+
+                {activeView === 'grid' && (
+                  <GridPreviewView
+                    posts={brandPosts}
+                    brand={currentBrand}
+                    onReorderFeed={reorderFeed}
+                    onSelectPost={(postId) => setSelectedPostId(postId)}
+                  />
+                )}
+              </div>
+
+              {/* Panel lateral de Retícula / Feed Visual en vistas Kanban y Calendario */}
+              {activeView !== 'grid' && showSideFeed && (
+                <aside className="w-full lg:w-80 xl:w-96 shrink-0 lg:sticky lg:top-20">
+                  <GridPreviewView
+                    posts={brandPosts}
+                    brand={currentBrand}
+                    onReorderFeed={reorderFeed}
+                    onSelectPost={(postId) => setSelectedPostId(postId)}
+                    compact
+                  />
+                </aside>
+              )}
+            </div>
+          </main>
+
+          {/* Modal Avanzado de Detalle */}
+          <ContentDetailModal
+            post={selectedPost}
+            onClose={() => setSelectedPostId(null)}
+            onUpdatePost={updatePost}
+            onDeletePost={deletePost}
+          />
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

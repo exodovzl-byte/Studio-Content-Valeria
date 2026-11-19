@@ -1,0 +1,375 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "Root workspace document owned by an authenticated user.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the workspace owner."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Display name shown in the workspace header."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was last updated."
+        }
+      },
+      "required": ["ownerId", "displayName", "createdAt", "updatedAt"]
+    },
+    "BrandProfile": {
+      "title": "BrandProfile",
+      "description": "Social profile and branding configuration for a managed brand space.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique brand identifier."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who owns this brand."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Visible brand name."
+        },
+        "badge": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4,
+          "description": "Short monogram initials."
+        },
+        "accent": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^#[0-9a-fA-F]{3,8}$",
+          "description": "Hex brand accent color."
+        },
+        "accentLight": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^#[0-9a-fA-F]{3,8}$",
+          "description": "Light tint hex color."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Multiline bio displayed in social previews."
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Social handle without leading @."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60,
+          "description": "Instagram profile category."
+        },
+        "website": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Profile website link text."
+        },
+        "avatarUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250000,
+          "description": "Optional compressed data URL or HTTPS image URL for avatar."
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Whether to display verified badge in preview."
+        },
+        "igPostsOverride": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "Optional custom posts count text for Instagram."
+        },
+        "igFollowers": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "Instagram followers count label."
+        },
+        "igFollowing": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "Instagram following count label."
+        },
+        "showStoryRing": {
+          "type": "boolean",
+          "description": "Whether to show the active story gradient ring."
+        },
+        "ttFollowing": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "TikTok following count label."
+        },
+        "ttFollowers": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "TikTok followers count label."
+        },
+        "ttLikes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 20,
+          "description": "TikTok likes count label."
+        },
+        "ttShowPinned": {
+          "type": "boolean",
+          "description": "Whether to display Pinned tag on first TikTok video."
+        },
+        "highlights": {
+          "type": "array",
+          "description": "Bounded list (max 12) of Instagram story highlights."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "name",
+        "badge",
+        "accent",
+        "accentLight",
+        "description",
+        "handle",
+        "category",
+        "website",
+        "igFollowers",
+        "igFollowing",
+        "ttFollowing",
+        "ttFollowers",
+        "ttLikes",
+        "highlights",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ContentPost": {
+      "title": "ContentPost",
+      "description": "Editorial content item managed in Kanban, Calendar, and Visual Feed.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique post document ID."
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who owns this post."
+        },
+        "brandId": {
+          "type": "string",
+          "enum": ["exodo", "agape", "personal"],
+          "description": "Brand space ID this post belongs to."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Content piece title."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "estrategia",
+            "produccion",
+            "copywriting",
+            "programado",
+            "publicado"
+          ],
+          "description": "Current Kanban workflow column."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["Instagram", "TikTok", "Web/Lanzamientos"],
+          "description": "Target social platform."
+        },
+        "contentType": {
+          "type": "string",
+          "enum": [
+            "Reel",
+            "Carrusel",
+            "Historia",
+            "Lanzamiento de Producto",
+            "Tanda"
+          ],
+          "description": "Editorial format type."
+        },
+        "date": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 16,
+          "description": "Scheduled date YYYY-MM-DD."
+        },
+        "time": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 10,
+          "description": "Scheduled time HH:mm."
+        },
+        "assignee": {
+          "type": "string",
+          "enum": ["Andrés", "Valeria", "Isaac", "Diseño Éxodo"],
+          "description": "Assigned team member."
+        },
+        "coverUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250000,
+          "description": "Cover artwork SVG/JPEG data URL or HTTPS URL."
+        },
+        "mediaType": {
+          "type": "string",
+          "enum": ["image", "video"],
+          "description": "Primary media kind."
+        },
+        "mediaItems": {
+          "type": "array",
+          "description": "Bounded list (max 10) of reference media items."
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 3000,
+          "description": "Post caption copy."
+        },
+        "hashtags": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Hashtag list text."
+        },
+        "cta": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500,
+          "description": "Call to action copy."
+        },
+        "internalNotes": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2000,
+          "description": "Internal production notes."
+        },
+        "checklist": {
+          "type": "array",
+          "description": "Bounded list (max 30) of checklist subtasks."
+        },
+        "comments": {
+          "type": "array",
+          "description": "Bounded list (max 50) of team comments."
+        },
+        "feedOrder": {
+          "type": "number",
+          "description": "Ordering position within the brand feed."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "ownerId",
+        "brandId",
+        "title",
+        "status",
+        "platform",
+        "contentType",
+        "date",
+        "time",
+        "assignee",
+        "coverUrl",
+        "mediaType",
+        "mediaItems",
+        "caption",
+        "hashtags",
+        "cta",
+        "internalNotes",
+        "checklist",
+        "comments",
+        "feedOrder",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserWorkspace"
+      },
+      "description": "Root workspace document per authenticated user (no PII)."
+    },
+    "/users/{userId}/brands/{brandId}": {
+      "schema": {
+        "$ref": "#/entities/BrandProfile"
+      },
+      "description": "Customizable social brand profiles owned by the user."
+    },
+    "/users/{userId}/posts/{postId}": {
+      "schema": {
+        "$ref": "#/entities/ContentPost"
+      },
+      "description": "Editorial content pieces managed across Kanban, Calendar, and Feed."
+    }
+  }
+}

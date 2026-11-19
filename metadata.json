@@ -1,0 +1,6 @@
+{
+  "name": "OmniContent Studio",
+  "description": "Sistema integral de gestión y producción de contenidos multimarca con tablero Kanban, calendario editorial y simulador visual de feed.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

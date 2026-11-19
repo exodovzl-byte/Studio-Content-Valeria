@@ -1,0 +1,279 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== GLOBAL PRIMITIVES ====================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function workspaceExists(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidWorkspace(data, userId) {
+      return data.keys().hasAll(['ownerId', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'displayName', 'createdAt', 'updatedAt'])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBrand(data, userId, brandId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'name', 'badge', 'accent', 'accentLight',
+          'description', 'handle', 'category', 'website',
+          'igFollowers', 'igFollowing', 'ttFollowing', 'ttFollowers', 'ttLikes',
+          'highlights', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'name', 'badge', 'accent', 'accentLight',
+          'description', 'handle', 'category', 'website',
+          'avatarUrl', 'verified', 'igPostsOverride',
+          'igFollowers', 'igFollowing', 'showStoryRing',
+          'ttFollowing', 'ttFollowers', 'ttLikes', 'ttShowPinned',
+          'highlights', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == brandId
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.badge is string && data.badge.size() >= 1 && data.badge.size() <= 4
+        && data.accent is string && data.accent.size() >= 4 && data.accent.size() <= 16 && data.accent.matches('^#[0-9a-fA-F]{3,8}$')
+        && data.accentLight is string && data.accentLight.size() >= 4 && data.accentLight.size() <= 16 && data.accentLight.matches('^#[0-9a-fA-F]{3,8}$')
+        && data.description is string && data.description.size() <= 300
+        && data.handle is string && data.handle.size() >= 1 && data.handle.size() <= 60
+        && data.category is string && data.category.size() <= 60
+        && data.website is string && data.website.size() <= 160
+        && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 250000))
+        && (!('verified' in data) || data.verified is bool)
+        && (!('igPostsOverride' in data) || (data.igPostsOverride is string && data.igPostsOverride.size() <= 20))
+        && data.igFollowers is string && data.igFollowers.size() <= 20
+        && data.igFollowing is string && data.igFollowing.size() <= 20
+        && (!('showStoryRing' in data) || data.showStoryRing is bool)
+        && data.ttFollowing is string && data.ttFollowing.size() <= 20
+        && data.ttFollowers is string && data.ttFollowers.size() <= 20
+        && data.ttLikes is string && data.ttLikes.size() <= 20
+        && (!('ttShowPinned' in data) || data.ttShowPinned is bool)
+        && data.highlights is list
+        && data.highlights.size() <= 12
+        && (data.highlights.size() == 0 || data.highlights[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPost(data, userId, postId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'brandId', 'title', 'status', 'platform', 'contentType',
+          'date', 'time', 'assignee', 'coverUrl', 'mediaType', 'mediaItems',
+          'caption', 'hashtags', 'cta', 'internalNotes', 'checklist', 'comments',
+          'feedOrder', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'brandId', 'title', 'status', 'platform', 'contentType',
+          'date', 'time', 'assignee', 'coverUrl', 'mediaType', 'mediaItems',
+          'caption', 'hashtags', 'cta', 'internalNotes', 'checklist', 'comments',
+          'feedOrder', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.id == postId
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.brandId in ['exodo', 'agape', 'personal']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.status in ['estrategia', 'produccion', 'copywriting', 'programado', 'publicado']
+        && data.platform in ['Instagram', 'TikTok', 'Web/Lanzamientos']
+        && data.contentType in ['Reel', 'Carrusel', 'Historia', 'Lanzamiento de Producto', 'Tanda']
+        && data.date is string && data.date.size() <= 16
+        && data.time is string && data.time.size() <= 10
+        && data.assignee in ['Andrés', 'Valeria', 'Isaac', 'Diseño Éxodo']
+        && data.coverUrl is string && data.coverUrl.size() <= 250000
+        && data.mediaType in ['image', 'video']
+        && data.mediaItems is list
+        && data.mediaItems.size() <= 10
+        && (data.mediaItems.size() == 0 || data.mediaItems[0] is map)
+        && data.caption is string && data.caption.size() <= 3000
+        && data.hashtags is string && data.hashtags.size() <= 1000
+        && data.cta is string && data.cta.size() <= 500
+        && data.internalNotes is string && data.internalNotes.size() <= 2000
+        && data.checklist is list
+        && data.checklist.size() <= 30
+        && (data.checklist.size() == 0 || data.checklist[0] is map)
+        && data.comments is list
+        && data.comments.size() <= 50
+        && (data.comments.size() == 0 || data.comments[0] is map)
+        && data.feedOrder is number && data.feedOrder >= 0 && data.feedOrder <= 10000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ==================== USER WORKSPACE ====================
+    match /users/{userId} {
+      allow get: if isValidId(userId)
+        && isOwner(userId)
+        && (resource == null || existing().ownerId == request.auth.uid);
+      allow list: if false;
+
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']);
+
+      allow delete: if isValidId(userId)
+        && isOwner(userId)
+        && existing().ownerId == request.auth.uid;
+
+      // ==================== BRANDS SUBCOLLECTION ====================
+      match /brands/{brandId} {
+        allow get: if isValidId(userId)
+          && isValidId(brandId)
+          && isOwner(userId)
+          && (resource == null || existing().ownerId == request.auth.uid)
+          && workspaceExists(userId);
+
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(brandId)
+          && isOwner(userId)
+          && isValidBrand(incoming(), userId, brandId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && workspaceExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(brandId)
+          && isOwner(userId)
+          && isValidBrand(incoming(), userId, brandId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && workspaceExists(userId)
+          && (
+            // Action: Update identity & profile bio
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'badge', 'accent', 'accentLight', 'description',
+              'handle', 'category', 'website', 'avatarUrl', 'verified', 'updatedAt'
+            ]) ||
+            // Action: Update Instagram settings & highlights
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'igPostsOverride', 'igFollowers', 'igFollowing',
+              'showStoryRing', 'highlights', 'updatedAt'
+            ]) ||
+            // Action: Update TikTok settings
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'ttFollowing', 'ttFollowers', 'ttLikes', 'ttShowPinned', 'updatedAt'
+            ]) ||
+            // Action: Full brand profile save or reset
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'badge', 'accent', 'accentLight', 'description',
+              'handle', 'category', 'website', 'avatarUrl', 'verified',
+              'igPostsOverride', 'igFollowers', 'igFollowing', 'showStoryRing',
+              'ttFollowing', 'ttFollowers', 'ttLikes', 'ttShowPinned',
+              'highlights', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId)
+          && isValidId(brandId)
+          && isOwner(userId)
+          && existing().ownerId == request.auth.uid
+          && workspaceExists(userId);
+      }
+
+      // ==================== POSTS SUBCOLLECTION ====================
+      match /posts/{postId} {
+        allow get: if isValidId(userId)
+          && isValidId(postId)
+          && isOwner(userId)
+          && (resource == null || existing().ownerId == request.auth.uid)
+          && workspaceExists(userId);
+
+        allow list: if isValidId(userId)
+          && isOwner(userId)
+          && existing().ownerId == request.auth.uid;
+
+        allow create: if isValidId(userId)
+          && isValidId(postId)
+          && isOwner(userId)
+          && isValidPost(incoming(), userId, postId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && workspaceExists(userId);
+
+        allow update: if isValidId(userId)
+          && isValidId(postId)
+          && isOwner(userId)
+          && isValidPost(incoming(), userId, postId)
+          && incoming().id == existing().id
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && workspaceExists(userId)
+          && (
+            // Action: Move Kanban stage
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+            // Action: Reorder Visual Feed
+            incoming().diff(existing()).affectedKeys().hasOnly(['feedOrder', 'updatedAt']) ||
+            // Action: Edit content details, metadata, checklist, comments, or media
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'brandId', 'title', 'status', 'platform', 'contentType',
+              'date', 'time', 'assignee', 'coverUrl', 'mediaType', 'mediaItems',
+              'caption', 'hashtags', 'cta', 'internalNotes', 'checklist',
+              'comments', 'feedOrder', 'updatedAt'
+            ])
+          );
+
+        allow delete: if isValidId(userId)
+          && isValidId(postId)
+          && isOwner(userId)
+          && existing().ownerId == request.auth.uid
+          && workspaceExists(userId);
+      }
+    }
+  }
+}
