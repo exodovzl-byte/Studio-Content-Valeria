@@ -1,4 +1,4 @@
-export type BrandId = 'exodo' | 'agape' | 'personal';
+export type BrandId = string;
 
 export type KanbanStatus =
   | 'estrategia'

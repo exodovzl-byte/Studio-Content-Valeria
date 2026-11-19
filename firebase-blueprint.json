@@ -211,7 +211,9 @@
         },
         "brandId": {
           "type": "string",
-          "enum": ["exodo", "agape", "personal"],
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Brand space ID this post belongs to."
         },
         "title": {

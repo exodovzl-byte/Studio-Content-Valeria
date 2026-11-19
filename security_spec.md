@@ -3,8 +3,8 @@
 ## 1. Data Invariants & Relationship Mapping
 - **Master Source of Truth**: `/users/{userId}` is the root workspace owned exclusively by the authenticated, email-verified user where `userId == request.auth.uid`.
 - **Relational Subcollections**:
-  - `/users/{userId}/brands/{brandId}`: Social brand profiles belong strictly to `/users/{userId}`. Cannot be created unless the parent `/users/{userId}` workspace exists.
-  - `/users/{userId}/posts/{postId}`: Editorial content pieces belong strictly to `/users/{userId}`. Cannot be created unless the parent `/users/{userId}` workspace exists.
+  - `/users/{userId}/brands/{brandId}`: Dynamic social brand profiles (create, rename, update, delete) belong strictly to `/users/{userId}`. Cannot be created unless the parent `/users/{userId}` workspace exists.
+  - `/users/{userId}/posts/{postId}`: Editorial content pieces belong strictly to `/users/{userId}` and must reference a valid existing brand (`existsAfter(/users/{userId}/brands/{brandId})`) under the same workspace.
 - **Zero PII Exposure**: No email, phone number, or private PII is stored inside readable shared collections; every collection is strictly owner-isolated (`userId == request.auth.uid` and `resource.data.ownerId == request.auth.uid`).
 - **Temporal & Ownership Immutability**: `ownerId` and `createdAt` are immutable after creation; `createdAt == request.time` on create and `updatedAt == request.time` on create/update.
 - **Strict Volumetric Bounds**: Every string and array has explicit upper bounds to prevent Denial-of-Wallet and document bloat.

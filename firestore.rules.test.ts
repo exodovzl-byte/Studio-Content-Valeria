@@ -121,11 +121,11 @@ export const DIRTY_DOZEN_PAYLOADS: DirtyDozenCase[] = [
   },
   {
     id: 12,
-    name: 'Orphaned Subcollection Write without Parent Workspace',
+    name: 'Orphaned Subcollection Write without Parent Workspace or Brand',
     operation: 'create',
     path: '/users/user-no-workspace/posts/post-1',
     auth: { uid: 'user-no-workspace', email_verified: true },
-    payload: { id: 'post-1', ownerId: 'user-no-workspace' },
+    payload: { id: 'post-1', ownerId: 'user-no-workspace', brandId: 'ghost-brand' },
     expected: 'PERMISSION_DENIED',
   },
 ];

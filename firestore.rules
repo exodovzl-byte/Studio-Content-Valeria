@@ -35,6 +35,10 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(userId));
     }
 
+    function brandExistsAfter(userId, brandId) {
+      return existsAfter(/databases/$(database)/documents/users/$(userId)/brands/$(brandId));
+    }
+
     // ==================== VALIDATION BLUEPRINTS ====================
     function isValidWorkspace(data, userId) {
       return data.keys().hasAll(['ownerId', 'displayName', 'createdAt', 'updatedAt'])
@@ -64,6 +68,7 @@ service cloud.firestore {
           'highlights', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
+        && data.id.size() <= 64
         && data.id == brandId
         && isValidId(data.ownerId)
         && data.ownerId == userId
@@ -111,7 +116,8 @@ service cloud.firestore {
         && isValidId(data.ownerId)
         && data.ownerId == userId
         && data.ownerId == request.auth.uid
-        && data.brandId in ['exodo', 'agape', 'personal']
+        && isValidId(data.brandId)
+        && data.brandId.size() <= 64
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
         && data.status in ['estrategia', 'produccion', 'copywriting', 'programado', 'publicado']
         && data.platform in ['Instagram', 'TikTok', 'Web/Lanzamientos']
@@ -243,7 +249,8 @@ service cloud.firestore {
           && isValidPost(incoming(), userId, postId)
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time
-          && workspaceExists(userId);
+          && workspaceExists(userId)
+          && brandExistsAfter(userId, incoming().brandId);
 
         allow update: if isValidId(userId)
           && isValidId(postId)

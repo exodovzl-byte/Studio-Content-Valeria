@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, LogIn, LogOut, RotateCcw, Trash2 } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  LogIn,
+  LogOut,
+  RotateCcw,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { Brand, BrandId } from '../types/content';
 
 interface AccountUser {
@@ -11,8 +19,9 @@ interface AccountUser {
 interface BrandSelectorProps {
   brands: Brand[];
   selectedBrandId: BrandId;
-  countsByBrand: Record<BrandId, number>;
+  countsByBrand: Record<string, number>;
   onSelectBrand: (brandId: BrandId) => void;
+  onOpenBrandManager: () => void;
   onResetDemo: () => void;
   onOpenClearModal: () => void;
   accountUser: AccountUser | null;
@@ -27,6 +36,7 @@ export function BrandSelector({
   selectedBrandId,
   countsByBrand,
   onSelectBrand,
+  onOpenBrandManager,
   onResetDemo,
   onOpenClearModal,
   accountUser,
@@ -161,6 +171,17 @@ export function BrandSelector({
           </div>
 
           <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800 space-y-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                onOpenBrandManager();
+                setOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Agregar, renombrar o quitar marcas
+            </button>
             <button
               type="button"
               onClick={() => {

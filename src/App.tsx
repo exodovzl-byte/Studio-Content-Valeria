@@ -9,14 +9,17 @@ import {
   Calendar,
   Kanban,
   LayoutGrid,
+  LogIn,
   Moon,
   PanelRight,
   Plus,
   Search,
+  SlidersHorizontal,
   Sun,
   Trash2,
   X,
 } from 'lucide-react';
+import { BrandManagerModal } from './components/BrandManagerModal';
 import { BrandSelector } from './components/BrandSelector';
 import { CalendarView } from './components/CalendarView';
 import { ClearContentModal } from './components/ClearContentModal';
@@ -37,7 +40,9 @@ import {
 } from './data/initialData';
 import { auth, googleProvider } from './firebase';
 import {
+  createBrandInFirestore,
   createPostInFirestore,
+  deleteBrandAndPostsInFirestore,
   deletePostInFirestore,
   deletePostsBatchInFirestore,
   ensureWorkspaceAndSeed,
@@ -67,10 +72,17 @@ function loadInitialBrands(): Brand[] {
     if (!raw) return BRANDS;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) return BRANDS;
-    return BRANDS.map((defaultBrand) => {
-      const saved = parsed.find((b: Brand) => b.id === defaultBrand.id);
-      return saved ? { ...defaultBrand, ...saved } : defaultBrand;
-    });
+    return parsed
+      .filter(
+        (item): item is Brand =>
+          Boolean(item) &&
+          typeof item.id === 'string' &&
+          typeof item.name === 'string'
+      )
+      .map((item) => {
+        const defaultMatch = BRANDS.find((b) => b.id === item.id);
+        return defaultMatch ? { ...defaultMatch, ...item } : item;
+      });
   } catch {
     return BRANDS;
   }
@@ -105,7 +117,10 @@ function loadInitialTheme(): boolean {
 
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(loadInitialTheme);
-  const [selectedBrandId, setSelectedBrandId] = useState<BrandId>('exodo');
+  const [brands, setBrands] = useState<Brand[]>(loadInitialBrands);
+  const [selectedBrandId, setSelectedBrandId] = useState<BrandId>(
+    () => loadInitialBrands()[0]?.id || 'exodo'
+  );
   const [activeView, setActiveView] = useState<ActiveView>('kanban');
   const [showSideFeed, setShowSideFeed] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -114,16 +129,28 @@ export default function App() {
   );
   const [previewNetwork, setPreviewNetwork] =
     useState<SocialPreviewNetwork>('Instagram');
-  const [brands, setBrands] = useState<Brand[]>(loadInitialBrands);
   const [posts, setPosts] = useState<ContentPost[]>(loadInitialPosts);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [profileEditorOpen, setProfileEditorOpen] = useState<boolean>(false);
+  const [brandManagerOpen, setBrandManagerOpen] = useState<boolean>(false);
   const [clearModalOpen, setClearModalOpen] = useState<boolean>(false);
 
   // Background cloud auth & sync state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
+  const [authNoticeDismissed, setAuthNoticeDismissed] =
+    useState<boolean>(false);
+  const [authHint, setAuthHint] = useState<string | null>(null);
+
+  // Synchronous refs so React 19 batched state updaters never lose cloud writes
+  const postsRef = useRef<ContentPost[]>(posts);
+  const brandsRef = useRef<Brand[]>(brands);
+  const userRef = useRef<User | null>(user);
+
+  postsRef.current = posts;
+  brandsRef.current = brands;
+  userRef.current = user;
 
   // Debounce timers and pending snapshots so edits flush immediately before closing page
   const postSyncTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>(
@@ -137,8 +164,12 @@ export default function App() {
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (nextUser) => {
+      userRef.current = nextUser;
       setUser(nextUser);
       setAuthReady(true);
+      if (nextUser) {
+        setAuthHint(null);
+      }
     });
     return () => unsubAuth();
   }, []);
@@ -155,12 +186,24 @@ export default function App() {
         if (cancelled) return;
         unsubBrands = subscribeToBrands(
           user.uid,
-          (remoteBrands) => setBrands(remoteBrands),
+          (remoteBrands) => {
+            const merged = remoteBrands.map(
+              (b) => pendingBrandSaves.current[b.id] || b
+            );
+            brandsRef.current = merged;
+            setBrands(merged);
+          },
           (err) => console.error('Cloud brand sync error:', err)
         );
         unsubPosts = subscribeToPosts(
           user.uid,
-          (remotePosts) => setPosts(remotePosts),
+          (remotePosts) => {
+            const merged = remotePosts.map(
+              (p) => pendingPostSaves.current[p.id] || p
+            );
+            postsRef.current = merged;
+            setPosts(merged);
+          },
           (err) => console.error('Cloud post sync error:', err)
         );
       })
@@ -176,6 +219,14 @@ export default function App() {
       unsubPosts?.();
     };
   }, [authReady, user]);
+
+  // Keep selectedBrandId valid whenever brands change (locally or remotely)
+  useEffect(() => {
+    if (brands.length > 0 && !brands.some((b) => b.id === selectedBrandId)) {
+      setSelectedBrandId(brands[0].id);
+      setSelectedPostId(null);
+    }
+  }, [brands, selectedBrandId]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -210,7 +261,10 @@ export default function App() {
       if (e.key === STORAGE_POSTS_KEY && e.newValue !== null) {
         try {
           const parsed = JSON.parse(e.newValue);
-          if (Array.isArray(parsed)) setPosts(parsed);
+          if (Array.isArray(parsed)) {
+            postsRef.current = parsed;
+            setPosts(parsed);
+          }
         } catch {
           // Ignore malformed storage data
         }
@@ -218,7 +272,10 @@ export default function App() {
       if (e.key === STORAGE_BRANDS_KEY && e.newValue !== null) {
         try {
           const parsed = JSON.parse(e.newValue);
-          if (Array.isArray(parsed) && parsed.length > 0) setBrands(parsed);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            brandsRef.current = parsed;
+            setBrands(parsed);
+          }
         } catch {
           // Ignore malformed storage data
         }
@@ -228,17 +285,18 @@ export default function App() {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  // Flush any pending Firestore updates when leaving or backgrounding the app
+  // Flush any pending cloud updates immediately when leaving or backgrounding the app
   useEffect(() => {
-    if (!user) return;
     const flushPending = () => {
+      const activeUser = userRef.current;
+      if (!activeUser) return;
       Object.entries(pendingPostSaves.current).forEach(([postId, snapshot]) => {
         if (postSyncTimers.current[postId]) {
           clearTimeout(postSyncTimers.current[postId]);
           delete postSyncTimers.current[postId];
         }
         delete pendingPostSaves.current[postId];
-        updatePostInFirestore(user.uid, snapshot).catch(() => {});
+        updatePostInFirestore(activeUser.uid, snapshot).catch(() => {});
       });
       Object.entries(pendingBrandSaves.current).forEach(
         ([brandId, snapshot]) => {
@@ -247,7 +305,7 @@ export default function App() {
             delete brandSyncTimers.current[brandId];
           }
           delete pendingBrandSaves.current[brandId];
-          saveBrandToFirestore(user.uid, snapshot).catch(() => {});
+          saveBrandToFirestore(activeUser.uid, snapshot).catch(() => {});
         }
       );
     };
@@ -261,15 +319,24 @@ export default function App() {
       window.removeEventListener('pagehide', flushPending);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [user]);
+  }, []);
 
   const handleSignIn = async () => {
     setAuthBusy(true);
+    setAuthHint(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('popup-closed-by-user')) {
+      if (msg.includes('unauthorized-domain')) {
+        setAuthHint(
+          `El dominio "${window.location.hostname}" debe agregarse en los dominios autorizados de tu consola de autenticación para iniciar sesión.`
+        );
+      } else if (msg.includes('popup-blocked')) {
+        setAuthHint(
+          'Tu navegador bloqueó la ventana emergente de Google. Permite ventanas emergentes e intenta de nuevo.'
+        );
+      } else if (!msg.includes('popup-closed-by-user')) {
         console.error('Sign-in error:', err);
       }
     } finally {
@@ -281,6 +348,7 @@ export default function App() {
     setAuthBusy(true);
     try {
       await signOut(auth);
+      setAuthNoticeDismissed(false);
     } finally {
       setAuthBusy(false);
     }
@@ -306,18 +374,15 @@ export default function App() {
   );
 
   const countsByBrand = useMemo(() => {
-    const counts: Record<BrandId, number> = {
-      exodo: 0,
-      agape: 0,
-      personal: 0,
-    };
+    const counts: Record<string, number> = {};
+    brands.forEach((b) => {
+      counts[b.id] = 0;
+    });
     posts.forEach((p) => {
-      if (counts[p.brandId] !== undefined) {
-        counts[p.brandId] += 1;
-      }
+      counts[p.brandId] = (counts[p.brandId] ?? 0) + 1;
     });
     return counts;
-  }, [posts]);
+  }, [brands, posts]);
 
   const brandPosts = useMemo(() => {
     return posts.filter((p) => {
@@ -378,7 +443,9 @@ export default function App() {
     date?: string;
     platform?: Platform;
   } = {}) => {
-    const brandItems = posts.filter((p) => p.brandId === selectedBrandId);
+    const brandItems = postsRef.current.filter(
+      (p) => p.brandId === selectedBrandId
+    );
     const newId = `post-${Date.now()}`;
     const resolvedPlatform: Platform =
       platform ?? (platformFilter === 'Todas' ? 'Instagram' : platformFilter);
@@ -417,167 +484,286 @@ export default function App() {
       comments: [],
       feedOrder: brandItems.length,
     };
-    setPosts((prev) => [created, ...prev]);
+
+    const nextPosts = [created, ...postsRef.current];
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
     setSelectedPostId(newId);
 
-    if (user) {
-      createPostInFirestore(user.uid, created).catch((err) =>
+    if (userRef.current) {
+      createPostInFirestore(userRef.current.uid, created).catch((err) =>
         console.error('Cloud create error:', err)
       );
     }
   };
 
   const updatePost = (postId: string, patch: Partial<ContentPost>) => {
-    let nextFull: ContentPost | null = null;
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id !== postId) return p;
-        nextFull = { ...p, ...patch };
-        return nextFull;
-      })
-    );
+    const existing = postsRef.current.find((p) => p.id === postId);
+    if (!existing) return;
 
-    if (user && nextFull) {
-      const snapshotToSave = nextFull;
-      pendingPostSaves.current[postId] = snapshotToSave;
+    const nextFull: ContentPost = { ...existing, ...patch };
+    const nextPosts = postsRef.current.map((p) =>
+      p.id === postId ? nextFull : p
+    );
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
+
+    const activeUser = userRef.current;
+    if (activeUser) {
+      pendingPostSaves.current[postId] = nextFull;
       if (postSyncTimers.current[postId]) {
         clearTimeout(postSyncTimers.current[postId]);
       }
       postSyncTimers.current[postId] = setTimeout(() => {
-        delete pendingPostSaves.current[postId];
-        updatePostInFirestore(user.uid, snapshotToSave).catch((err) =>
-          console.error('Cloud update error:', err)
-        );
-      }, 250);
+        delete postSyncTimers.current[postId];
+        updatePostInFirestore(activeUser.uid, nextFull)
+          .catch((err) => console.error('Cloud update error:', err))
+          .finally(() => {
+            if (pendingPostSaves.current[postId] === nextFull) {
+              delete pendingPostSaves.current[postId];
+            }
+          });
+      }, 220);
     }
   };
 
   const deletePost = (postId: string) => {
-    setPosts((prev) => prev.filter((p) => p.id !== postId));
+    const nextPosts = postsRef.current.filter((p) => p.id !== postId);
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
     if (selectedPostId === postId) setSelectedPostId(null);
 
-    if (user) {
-      if (postSyncTimers.current[postId]) {
-        clearTimeout(postSyncTimers.current[postId]);
-      }
-      delete pendingPostSaves.current[postId];
-      deletePostInFirestore(user.uid, postId).catch((err) =>
+    if (postSyncTimers.current[postId]) {
+      clearTimeout(postSyncTimers.current[postId]);
+      delete postSyncTimers.current[postId];
+    }
+    delete pendingPostSaves.current[postId];
+
+    if (userRef.current) {
+      deletePostInFirestore(userRef.current.uid, postId).catch((err) =>
         console.error('Cloud delete error:', err)
       );
     }
   };
 
   const clearDemoOnly = () => {
-    const idsToDelete = posts
+    const idsToDelete = postsRef.current
       .filter((p) => DEMO_POST_IDS.has(p.id))
       .map((p) => p.id);
     if (idsToDelete.length === 0) return;
 
-    setPosts((prev) => prev.filter((p) => !DEMO_POST_IDS.has(p.id)));
+    const nextPosts = postsRef.current.filter((p) => !DEMO_POST_IDS.has(p.id));
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
     if (selectedPostId && DEMO_POST_IDS.has(selectedPostId)) {
       setSelectedPostId(null);
     }
 
-    if (user) {
-      idsToDelete.forEach((id) => {
-        if (postSyncTimers.current[id]) clearTimeout(postSyncTimers.current[id]);
-        delete pendingPostSaves.current[id];
-      });
-      deletePostsBatchInFirestore(user.uid, idsToDelete).catch((err) =>
-        console.error('Cloud batch delete error:', err)
+    idsToDelete.forEach((id) => {
+      if (postSyncTimers.current[id]) {
+        clearTimeout(postSyncTimers.current[id]);
+        delete postSyncTimers.current[id];
+      }
+      delete pendingPostSaves.current[id];
+    });
+
+    if (userRef.current) {
+      deletePostsBatchInFirestore(userRef.current.uid, idsToDelete).catch(
+        (err) => console.error('Cloud batch delete error:', err)
       );
     }
   };
 
   const clearCurrentBrandPosts = () => {
-    const idsToDelete = posts
+    const idsToDelete = postsRef.current
       .filter((p) => p.brandId === selectedBrandId)
       .map((p) => p.id);
     if (idsToDelete.length === 0) return;
     const idSet = new Set(idsToDelete);
 
-    setPosts((prev) => prev.filter((p) => p.brandId !== selectedBrandId));
+    const nextPosts = postsRef.current.filter(
+      (p) => p.brandId !== selectedBrandId
+    );
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
     if (selectedPostId && idSet.has(selectedPostId)) {
       setSelectedPostId(null);
     }
 
-    if (user) {
-      idsToDelete.forEach((id) => {
-        if (postSyncTimers.current[id]) clearTimeout(postSyncTimers.current[id]);
-        delete pendingPostSaves.current[id];
-      });
-      deletePostsBatchInFirestore(user.uid, idsToDelete).catch((err) =>
-        console.error('Cloud brand clear error:', err)
+    idsToDelete.forEach((id) => {
+      if (postSyncTimers.current[id]) {
+        clearTimeout(postSyncTimers.current[id]);
+        delete postSyncTimers.current[id];
+      }
+      delete pendingPostSaves.current[id];
+    });
+
+    if (userRef.current) {
+      deletePostsBatchInFirestore(userRef.current.uid, idsToDelete).catch(
+        (err) => console.error('Cloud brand clear error:', err)
       );
     }
   };
 
   const reorderFeed = (orderedIds: string[]) => {
-    setPosts((prev) =>
-      prev.map((p) => {
-        const idx = orderedIds.indexOf(p.id);
-        return idx !== -1 ? { ...p, feedOrder: idx } : p;
-      })
-    );
+    const nextPosts = postsRef.current.map((p) => {
+      const idx = orderedIds.indexOf(p.id);
+      return idx !== -1 ? { ...p, feedOrder: idx } : p;
+    });
+    postsRef.current = nextPosts;
+    setPosts(nextPosts);
 
-    if (user) {
-      reorderFeedInFirestore(user.uid, orderedIds).catch((err) =>
+    if (userRef.current) {
+      reorderFeedInFirestore(userRef.current.uid, orderedIds).catch((err) =>
         console.error('Cloud reorder error:', err)
       );
     }
   };
 
-  const updateBrand = (brandId: BrandId, patch: Partial<Brand>) => {
-    let nextFull: Brand | null = null;
-    setBrands((prev) =>
-      prev.map((b) => {
-        if (b.id !== brandId) return b;
-        nextFull = { ...b, ...patch };
-        return nextFull;
-      })
-    );
+  const createBrand = (newBrand: Brand) => {
+    const nextBrands = [...brandsRef.current, newBrand];
+    brandsRef.current = nextBrands;
+    setBrands(nextBrands);
+    setSelectedBrandId(newBrand.id);
+    setSelectedPostId(null);
 
-    if (user && nextFull) {
-      const snapshotToSave = nextFull;
-      pendingBrandSaves.current[brandId] = snapshotToSave;
+    if (userRef.current) {
+      createBrandInFirestore(userRef.current.uid, newBrand).catch((err) =>
+        console.error('Cloud brand create error:', err)
+      );
+    }
+  };
+
+  const updateBrand = (brandId: BrandId, patch: Partial<Brand>) => {
+    const existing = brandsRef.current.find((b) => b.id === brandId);
+    if (!existing) return;
+
+    const nextFull: Brand = { ...existing, ...patch };
+    const nextBrands = brandsRef.current.map((b) =>
+      b.id === brandId ? nextFull : b
+    );
+    brandsRef.current = nextBrands;
+    setBrands(nextBrands);
+
+    const activeUser = userRef.current;
+    if (activeUser) {
+      pendingBrandSaves.current[brandId] = nextFull;
       if (brandSyncTimers.current[brandId]) {
         clearTimeout(brandSyncTimers.current[brandId]);
       }
       brandSyncTimers.current[brandId] = setTimeout(() => {
-        delete pendingBrandSaves.current[brandId];
-        saveBrandToFirestore(user.uid, snapshotToSave).catch((err) =>
-          console.error('Cloud brand save error:', err)
-        );
-      }, 250);
+        delete brandSyncTimers.current[brandId];
+        saveBrandToFirestore(activeUser.uid, nextFull)
+          .catch((err) => console.error('Cloud brand save error:', err))
+          .finally(() => {
+            if (pendingBrandSaves.current[brandId] === nextFull) {
+              delete pendingBrandSaves.current[brandId];
+            }
+          });
+      }, 220);
+    }
+  };
+
+  const deleteBrand = (brandId: BrandId) => {
+    if (brandsRef.current.length <= 1) return;
+
+    const nextBrands = brandsRef.current.filter((b) => b.id !== brandId);
+    const postIdsToDelete = postsRef.current
+      .filter((p) => p.brandId === brandId)
+      .map((p) => p.id);
+    const postIdSet = new Set(postIdsToDelete);
+    const nextPosts = postsRef.current.filter((p) => p.brandId !== brandId);
+
+    brandsRef.current = nextBrands;
+    postsRef.current = nextPosts;
+    setBrands(nextBrands);
+    setPosts(nextPosts);
+
+    if (selectedBrandId === brandId && nextBrands[0]) {
+      setSelectedBrandId(nextBrands[0].id);
+    }
+    if (selectedPostId && postIdSet.has(selectedPostId)) {
+      setSelectedPostId(null);
+    }
+
+    if (brandSyncTimers.current[brandId]) {
+      clearTimeout(brandSyncTimers.current[brandId]);
+      delete brandSyncTimers.current[brandId];
+    }
+    delete pendingBrandSaves.current[brandId];
+    postIdsToDelete.forEach((id) => {
+      if (postSyncTimers.current[id]) {
+        clearTimeout(postSyncTimers.current[id]);
+        delete postSyncTimers.current[id];
+      }
+      delete pendingPostSaves.current[id];
+    });
+
+    if (userRef.current) {
+      deleteBrandAndPostsInFirestore(
+        userRef.current.uid,
+        brandId,
+        postIdsToDelete
+      ).catch((err) => console.error('Cloud brand delete error:', err));
     }
   };
 
   const resetBrand = (brandId: BrandId) => {
     const defaultBrand = BRANDS.find((b) => b.id === brandId);
-    if (!defaultBrand) return;
-    setBrands((prev) =>
-      prev.map((b) => (b.id === brandId ? defaultBrand : b))
-    );
+    const existing = brandsRef.current.find((b) => b.id === brandId);
+    if (!existing) return;
 
-    if (user) {
-      saveBrandToFirestore(user.uid, defaultBrand).catch((err) =>
+    const nextBrand: Brand = defaultBrand
+      ? defaultBrand
+      : {
+          ...existing,
+          description: '',
+          category: 'Marca',
+          website: '',
+          avatarUrl: '',
+          verified: false,
+          igPostsOverride: '',
+          igFollowers: '0',
+          igFollowing: '0',
+          showStoryRing: true,
+          ttFollowing: '0',
+          ttFollowers: '0',
+          ttLikes: '0',
+          ttShowPinned: true,
+          highlights: [],
+        };
+
+    const nextBrands = brandsRef.current.map((b) =>
+      b.id === brandId ? nextBrand : b
+    );
+    brandsRef.current = nextBrands;
+    setBrands(nextBrands);
+
+    if (userRef.current) {
+      saveBrandToFirestore(userRef.current.uid, nextBrand).catch((err) =>
         console.error('Cloud brand reset error:', err)
       );
     }
   };
 
   const resetDemo = () => {
-    const existingIds = posts.map((p) => p.id);
+    const existingBrandIds = brandsRef.current.map((b) => b.id);
+    const existingPostIds = postsRef.current.map((p) => p.id);
+    postsRef.current = INITIAL_POSTS;
+    brandsRef.current = BRANDS;
     setPosts(INITIAL_POSTS);
     setBrands(BRANDS);
+    setSelectedBrandId(BRANDS[0].id);
     setSearchQuery('');
     setPlatformFilter('Todas');
     setSelectedPostId(null);
 
-    if (user) {
-      resetDemoInFirestore(user.uid, existingIds).catch((err) =>
-        console.error('Cloud reset error:', err)
-      );
+    if (userRef.current) {
+      resetDemoInFirestore(
+        userRef.current.uid,
+        existingBrandIds,
+        existingPostIds
+      ).catch((err) => console.error('Cloud reset error:', err));
     }
   };
 
@@ -585,14 +771,14 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-zinc-800/90 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-          {/* Zone 1: Wordmark + Active Brand */}
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+          {/* Zone 1: Wordmark + Active Brand + Manage Brands */}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <div className="flex items-center gap-2 shrink-0">
               <span className="w-7 h-7 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-xs font-mono">
                 O
               </span>
-              <span className="font-semibold text-sm tracking-tight whitespace-nowrap hidden md:inline">
+              <span className="font-semibold text-sm tracking-tight whitespace-nowrap hidden xl:inline">
                 OmniContent Studio
               </span>
             </div>
@@ -610,6 +796,7 @@ export default function App() {
                 setSelectedBrandId(brandId);
                 setSelectedPostId(null);
               }}
+              onOpenBrandManager={() => setBrandManagerOpen(true)}
               onResetDemo={resetDemo}
               onOpenClearModal={() => setClearModalOpen(true)}
               accountUser={
@@ -626,6 +813,16 @@ export default function App() {
               onSignIn={handleSignIn}
               onSignOut={handleSignOut}
             />
+
+            <button
+              type="button"
+              onClick={() => setBrandManagerOpen(true)}
+              title="Agregar, cambiar nombre o quitar marcas"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-500" />
+              <span className="hidden md:inline">Marcas</span>
+            </button>
           </div>
 
           {/* Zone 2: Primary View Switcher */}
@@ -681,11 +878,59 @@ export default function App() {
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/60"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Nueva Pieza</span>
+              <span className="hidden sm:inline">Nueva Pieza</span>
             </button>
           </div>
         </div>
       </header>
+
+      {/* Account Sync Prompt (shown only when not signed in so phone & PC stay linked) */}
+      {authReady && !user && !authNoticeDismissed && (
+        <div className="border-b border-indigo-500/20 bg-indigo-500/8 dark:bg-indigo-500/12">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <p className="text-slate-700 dark:text-zinc-200">
+              Inicia sesión con tu cuenta de Google en tu teléfono y en tu PC
+              para ver cada modificación reflejada al instante en ambos
+              dispositivos.
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={authBusy}
+                onClick={handleSignIn}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Continuar con Google
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthNoticeDismissed(true)}
+                aria-label="Cerrar aviso"
+                className="p-1 rounded hover:bg-indigo-500/15 text-slate-500 dark:text-zinc-400"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {authHint && (
+        <div className="border-b border-amber-500/25 bg-amber-500/10">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 flex items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-200">
+            <span>{authHint}</span>
+            <button
+              type="button"
+              onClick={() => setAuthHint(null)}
+              aria-label="Cerrar mensaje"
+              className="p-1 rounded hover:bg-amber-500/20 shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Workspace Control Strip */}
       <div className="border-b border-slate-200/80 dark:border-zinc-800/70 bg-white/50 dark:bg-zinc-950/60">
@@ -735,7 +980,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: Summary + Auth + Workspace Utilities */}
+          {/* Right: Summary + Workspace Utilities */}
           <div className="flex items-center gap-2.5 shrink-0">
             <div className="hidden 2xl:flex items-center gap-2 text-xs text-slate-500 dark:text-zinc-400 font-mono tabular-nums mr-1">
               <span>{allCurrentBrandPosts.length} piezas</span>
@@ -878,6 +1123,22 @@ export default function App() {
         onClose={() => setProfileEditorOpen(false)}
         onUpdateBrand={updateBrand}
         onResetBrand={resetBrand}
+      />
+
+      {/* Brand Manager Modal (Create, Rename, Delete) */}
+      <BrandManagerModal
+        open={brandManagerOpen}
+        brands={brands}
+        selectedBrandId={selectedBrandId}
+        countsByBrand={countsByBrand}
+        onClose={() => setBrandManagerOpen(false)}
+        onSelectBrand={(brandId) => {
+          setSelectedBrandId(brandId);
+          setSelectedPostId(null);
+        }}
+        onCreateBrand={createBrand}
+        onRenameBrand={updateBrand}
+        onDeleteBrand={deleteBrand}
       />
 
       {/* Clear Demo / Brand Content Modal */}

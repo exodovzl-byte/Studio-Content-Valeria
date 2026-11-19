@@ -250,6 +250,20 @@ export async function ensureWorkspaceAndSeed(
   }
 }
 
+const DEFAULT_BRAND_ORDER = new Map(BRANDS.map((b, idx) => [b.id, idx]));
+
+function getTimestampMillis(value: unknown): number {
+  if (
+    value &&
+    typeof value === 'object' &&
+    'toMillis' in value &&
+    typeof (value as { toMillis: unknown }).toMillis === 'function'
+  ) {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 export function subscribeToBrands(
   uid: string,
   onData: (brands: Brand[]) => void,
@@ -263,15 +277,49 @@ export function subscribeToBrands(
   return onSnapshot(
     q,
     (snapshot) => {
-      const map = new Map<string, Brand>();
-      snapshot.docs.forEach((d) => {
-        const raw = d.data() as Brand;
-        map.set(d.id, { ...raw, id: d.id as BrandId });
+      const items = snapshot.docs.map((d) => {
+        const raw = d.data() as Brand & { createdAt?: unknown };
+        const defaultMatch = BRANDS.find((b) => b.id === d.id);
+        const merged: Brand = defaultMatch
+          ? { ...defaultMatch, ...raw, id: d.id }
+          : {
+              id: d.id,
+              name: raw.name || 'Marca',
+              badge: raw.badge || 'MC',
+              accent: raw.accent || '#4f46e5',
+              accentLight: raw.accentLight || '#eef2ff',
+              description: raw.description || '',
+              handle: raw.handle || 'marca',
+              category: raw.category || '',
+              website: raw.website || '',
+              avatarUrl: raw.avatarUrl || '',
+              verified: Boolean(raw.verified),
+              igPostsOverride: raw.igPostsOverride || '',
+              igFollowers: raw.igFollowers || '0',
+              igFollowing: raw.igFollowing || '0',
+              showStoryRing: raw.showStoryRing !== false,
+              ttFollowing: raw.ttFollowing || '0',
+              ttFollowers: raw.ttFollowers || '0',
+              ttLikes: raw.ttLikes || '0',
+              ttShowPinned: raw.ttShowPinned !== false,
+              highlights: Array.isArray(raw.highlights) ? raw.highlights : [],
+            };
+        return {
+          brand: merged,
+          defaultIdx: DEFAULT_BRAND_ORDER.get(d.id) ?? 999,
+          createdMs: getTimestampMillis(raw.createdAt),
+        };
       });
-      const ordered = BRANDS.map((def) =>
-        map.has(def.id) ? { ...def, ...map.get(def.id)! } : def
-      );
-      onData(ordered);
+
+      items.sort((a, b) => {
+        if (a.defaultIdx !== b.defaultIdx) return a.defaultIdx - b.defaultIdx;
+        if (a.createdMs !== b.createdMs) return a.createdMs - b.createdMs;
+        return a.brand.name.localeCompare(b.brand.name);
+      });
+
+      if (items.length > 0) {
+        onData(items.map((item) => item.brand));
+      }
     },
     (error) => {
       try {
@@ -313,19 +361,66 @@ export function subscribeToPosts(
   );
 }
 
-export async function saveBrandToFirestore(
+function isNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
+  const message =
+    'message' in error ? String((error as { message?: unknown }).message) : '';
+  return code === 'not-found' || message.includes('No document to update');
+}
+
+export async function createBrandInFirestore(
   uid: string,
   brand: Brand
 ): Promise<void> {
   const path = `users/${uid}/brands/${brand.id}`;
   try {
     const ref = doc(db, 'users', uid, 'brands', brand.id);
+    await setDoc(ref, buildBrandFirestorePayload(brand, uid, true));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function saveBrandToFirestore(
+  uid: string,
+  brand: Brand
+): Promise<void> {
+  const path = `users/${uid}/brands/${brand.id}`;
+  const ref = doc(db, 'users', uid, 'brands', brand.id);
+  try {
     const payload = buildBrandFirestorePayload(brand, uid, false);
     delete payload.id;
     delete payload.ownerId;
     await updateDoc(ref, payload);
   } catch (error) {
+    if (isNotFoundError(error)) {
+      try {
+        await setDoc(ref, buildBrandFirestorePayload(brand, uid, true));
+        return;
+      } catch (createErr) {
+        handleFirestoreError(createErr, OperationType.CREATE, path);
+      }
+    }
     handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteBrandAndPostsInFirestore(
+  uid: string,
+  brandId: string,
+  postIds: string[]
+): Promise<void> {
+  const path = `users/${uid}/brands/${brandId}`;
+  try {
+    const batch = writeBatch(db);
+    postIds.forEach((postId) => {
+      batch.delete(doc(db, 'users', uid, 'posts', postId));
+    });
+    batch.delete(doc(db, 'users', uid, 'brands', brandId));
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 
@@ -347,13 +442,21 @@ export async function updatePostInFirestore(
   post: ContentPost
 ): Promise<void> {
   const path = `users/${uid}/posts/${post.id}`;
+  const ref = doc(db, 'users', uid, 'posts', post.id);
   try {
-    const ref = doc(db, 'users', uid, 'posts', post.id);
     const payload = buildPostFirestorePayload(post, uid, false);
     delete payload.id;
     delete payload.ownerId;
     await updateDoc(ref, payload);
   } catch (error) {
+    if (isNotFoundError(error)) {
+      try {
+        await setDoc(ref, buildPostFirestorePayload(post, uid, true));
+        return;
+      } catch (createErr) {
+        handleFirestoreError(createErr, OperationType.CREATE, path);
+      }
+    }
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
@@ -409,26 +512,42 @@ export async function reorderFeedInFirestore(
 
 export async function resetDemoInFirestore(
   uid: string,
+  existingBrandIds: string[],
   existingPostIds: string[]
 ): Promise<void> {
   const path = `users/${uid}`;
   try {
-    const batch = writeBatch(db);
-    existingPostIds.forEach((postId) => {
-      batch.delete(doc(db, 'users', uid, 'posts', postId));
+    const existingBrandSet = new Set(existingBrandIds);
+    const defaultBrandIds = new Set(BRANDS.map((b) => b.id));
+
+    const brandBatch = writeBatch(db);
+    existingBrandIds.forEach((brandId) => {
+      if (!defaultBrandIds.has(brandId)) {
+        brandBatch.delete(doc(db, 'users', uid, 'brands', brandId));
+      }
     });
     BRANDS.forEach((b) => {
       const ref = doc(db, 'users', uid, 'brands', b.id);
-      const payload = buildBrandFirestorePayload(b, uid, false);
-      delete payload.id;
-      delete payload.ownerId;
-      batch.update(ref, payload);
+      if (existingBrandSet.has(b.id)) {
+        const payload = buildBrandFirestorePayload(b, uid, false);
+        delete payload.id;
+        delete payload.ownerId;
+        brandBatch.update(ref, payload);
+      } else {
+        brandBatch.set(ref, buildBrandFirestorePayload(b, uid, true));
+      }
+    });
+    await brandBatch.commit();
+
+    const postBatch = writeBatch(db);
+    existingPostIds.forEach((postId) => {
+      postBatch.delete(doc(db, 'users', uid, 'posts', postId));
     });
     INITIAL_POSTS.forEach((p) => {
       const ref = doc(db, 'users', uid, 'posts', p.id);
-      batch.set(ref, buildPostFirestorePayload(p, uid, true));
+      postBatch.set(ref, buildPostFirestorePayload(p, uid, true));
     });
-    await batch.commit();
+    await postBatch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
