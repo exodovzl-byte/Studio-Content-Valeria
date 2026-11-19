@@ -7,25 +7,27 @@ import {
 } from 'firebase/auth';
 import {
   Calendar,
-  Cloud,
   Kanban,
   LayoutGrid,
-  LogOut,
   Moon,
   PanelRight,
   Plus,
   Search,
   Sun,
+  Trash2,
   X,
 } from 'lucide-react';
 import { BrandSelector } from './components/BrandSelector';
 import { CalendarView } from './components/CalendarView';
+import { ClearContentModal } from './components/ClearContentModal';
 import { ContentDetailModal } from './components/ContentDetailModal';
 import {
   GridPreviewView,
   SocialPreviewNetwork,
 } from './components/GridPreviewView';
 import { KanbanBoard } from './components/KanbanBoard';
+import { PWAInstallButton } from './components/PWAInstallButton';
+import { PWAStatusBanner } from './components/PWAStatusBanner';
 import { ProfileEditorModal } from './components/ProfileEditorModal';
 import {
   BRANDS,
@@ -37,6 +39,7 @@ import { auth, googleProvider } from './firebase';
 import {
   createPostInFirestore,
   deletePostInFirestore,
+  deletePostsBatchInFirestore,
   ensureWorkspaceAndSeed,
   reorderFeedInFirestore,
   resetDemoInFirestore,
@@ -73,12 +76,14 @@ function loadInitialBrands(): Brand[] {
   }
 }
 
+const DEMO_POST_IDS = new Set(INITIAL_POSTS.map((p) => p.id));
+
 function loadInitialPosts(): ContentPost[] {
   try {
     const raw = localStorage.getItem(STORAGE_POSTS_KEY);
-    if (!raw) return INITIAL_POSTS;
+    if (raw === null) return INITIAL_POSTS;
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed;
     }
     return INITIAL_POSTS;
@@ -113,20 +118,22 @@ export default function App() {
   const [posts, setPosts] = useState<ContentPost[]>(loadInitialPosts);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [profileEditorOpen, setProfileEditorOpen] = useState<boolean>(false);
+  const [clearModalOpen, setClearModalOpen] = useState<boolean>(false);
 
-  // Firebase Auth & Sync State
+  // Background cloud auth & sync state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Debounce timers for high-frequency typing sync to Firestore
+  // Debounce timers and pending snapshots so edits flush immediately before closing page
   const postSyncTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>(
     {}
   );
   const brandSyncTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>(
     {}
   );
+  const pendingPostSaves = useRef<Record<string, ContentPost>>({});
+  const pendingBrandSaves = useRef<Record<string, Brand>>({});
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (nextUser) => {
@@ -143,28 +150,23 @@ export default function App() {
     let unsubBrands: (() => void) | null = null;
     let unsubPosts: (() => void) | null = null;
 
-    setSyncError(null);
     ensureWorkspaceAndSeed(user.uid, user.displayName || 'Usuario')
       .then(() => {
         if (cancelled) return;
         unsubBrands = subscribeToBrands(
           user.uid,
           (remoteBrands) => setBrands(remoteBrands),
-          (err) => setSyncError(err.message)
+          (err) => console.error('Cloud brand sync error:', err)
         );
         unsubPosts = subscribeToPosts(
           user.uid,
           (remotePosts) => setPosts(remotePosts),
-          (err) => setSyncError(err.message)
+          (err) => console.error('Cloud post sync error:', err)
         );
       })
       .catch((err) => {
         if (!cancelled) {
-          setSyncError(
-            err instanceof Error
-              ? err.message
-              : 'No se pudo conectar con Firestore.'
-          );
+          console.error('Cloud workspace init error:', err);
         }
       });
 
@@ -202,16 +204,73 @@ export default function App() {
     }
   }, [brands]);
 
+  // Cross-tab live updates for localStorage edits
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_POSTS_KEY && e.newValue !== null) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setPosts(parsed);
+        } catch {
+          // Ignore malformed storage data
+        }
+      }
+      if (e.key === STORAGE_BRANDS_KEY && e.newValue !== null) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) setBrands(parsed);
+        } catch {
+          // Ignore malformed storage data
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // Flush any pending Firestore updates when leaving or backgrounding the app
+  useEffect(() => {
+    if (!user) return;
+    const flushPending = () => {
+      Object.entries(pendingPostSaves.current).forEach(([postId, snapshot]) => {
+        if (postSyncTimers.current[postId]) {
+          clearTimeout(postSyncTimers.current[postId]);
+          delete postSyncTimers.current[postId];
+        }
+        delete pendingPostSaves.current[postId];
+        updatePostInFirestore(user.uid, snapshot).catch(() => {});
+      });
+      Object.entries(pendingBrandSaves.current).forEach(
+        ([brandId, snapshot]) => {
+          if (brandSyncTimers.current[brandId]) {
+            clearTimeout(brandSyncTimers.current[brandId]);
+            delete brandSyncTimers.current[brandId];
+          }
+          delete pendingBrandSaves.current[brandId];
+          saveBrandToFirestore(user.uid, snapshot).catch(() => {});
+        }
+      );
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPending();
+    };
+    window.addEventListener('pagehide', flushPending);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [user]);
+
   const handleSignIn = async () => {
     setAuthBusy(true);
-    setSyncError(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : 'Error al iniciar sesión.';
+      const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes('popup-closed-by-user')) {
-        setSyncError(msg);
+        console.error('Sign-in error:', err);
       }
     } finally {
       setAuthBusy(false);
@@ -222,7 +281,6 @@ export default function App() {
     setAuthBusy(true);
     try {
       await signOut(auth);
-      setSyncError(null);
     } finally {
       setAuthBusy(false);
     }
@@ -301,6 +359,11 @@ export default function App() {
     [allCurrentBrandPosts]
   );
 
+  const demoPostsCount = useMemo(
+    () => posts.filter((p) => DEMO_POST_IDS.has(p.id)).length,
+    [posts]
+  );
+
   const selectedPost = useMemo(
     () => posts.find((p) => p.id === selectedPostId) || null,
     [posts, selectedPostId]
@@ -359,7 +422,7 @@ export default function App() {
 
     if (user) {
       createPostInFirestore(user.uid, created).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        console.error('Cloud create error:', err)
       );
     }
   };
@@ -376,14 +439,16 @@ export default function App() {
 
     if (user && nextFull) {
       const snapshotToSave = nextFull;
+      pendingPostSaves.current[postId] = snapshotToSave;
       if (postSyncTimers.current[postId]) {
         clearTimeout(postSyncTimers.current[postId]);
       }
       postSyncTimers.current[postId] = setTimeout(() => {
+        delete pendingPostSaves.current[postId];
         updatePostInFirestore(user.uid, snapshotToSave).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          console.error('Cloud update error:', err)
         );
-      }, 350);
+      }, 250);
     }
   };
 
@@ -395,8 +460,54 @@ export default function App() {
       if (postSyncTimers.current[postId]) {
         clearTimeout(postSyncTimers.current[postId]);
       }
+      delete pendingPostSaves.current[postId];
       deletePostInFirestore(user.uid, postId).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        console.error('Cloud delete error:', err)
+      );
+    }
+  };
+
+  const clearDemoOnly = () => {
+    const idsToDelete = posts
+      .filter((p) => DEMO_POST_IDS.has(p.id))
+      .map((p) => p.id);
+    if (idsToDelete.length === 0) return;
+
+    setPosts((prev) => prev.filter((p) => !DEMO_POST_IDS.has(p.id)));
+    if (selectedPostId && DEMO_POST_IDS.has(selectedPostId)) {
+      setSelectedPostId(null);
+    }
+
+    if (user) {
+      idsToDelete.forEach((id) => {
+        if (postSyncTimers.current[id]) clearTimeout(postSyncTimers.current[id]);
+        delete pendingPostSaves.current[id];
+      });
+      deletePostsBatchInFirestore(user.uid, idsToDelete).catch((err) =>
+        console.error('Cloud batch delete error:', err)
+      );
+    }
+  };
+
+  const clearCurrentBrandPosts = () => {
+    const idsToDelete = posts
+      .filter((p) => p.brandId === selectedBrandId)
+      .map((p) => p.id);
+    if (idsToDelete.length === 0) return;
+    const idSet = new Set(idsToDelete);
+
+    setPosts((prev) => prev.filter((p) => p.brandId !== selectedBrandId));
+    if (selectedPostId && idSet.has(selectedPostId)) {
+      setSelectedPostId(null);
+    }
+
+    if (user) {
+      idsToDelete.forEach((id) => {
+        if (postSyncTimers.current[id]) clearTimeout(postSyncTimers.current[id]);
+        delete pendingPostSaves.current[id];
+      });
+      deletePostsBatchInFirestore(user.uid, idsToDelete).catch((err) =>
+        console.error('Cloud brand clear error:', err)
       );
     }
   };
@@ -411,7 +522,7 @@ export default function App() {
 
     if (user) {
       reorderFeedInFirestore(user.uid, orderedIds).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        console.error('Cloud reorder error:', err)
       );
     }
   };
@@ -428,14 +539,16 @@ export default function App() {
 
     if (user && nextFull) {
       const snapshotToSave = nextFull;
+      pendingBrandSaves.current[brandId] = snapshotToSave;
       if (brandSyncTimers.current[brandId]) {
         clearTimeout(brandSyncTimers.current[brandId]);
       }
       brandSyncTimers.current[brandId] = setTimeout(() => {
+        delete pendingBrandSaves.current[brandId];
         saveBrandToFirestore(user.uid, snapshotToSave).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          console.error('Cloud brand save error:', err)
         );
-      }, 350);
+      }, 250);
     }
   };
 
@@ -448,7 +561,7 @@ export default function App() {
 
     if (user) {
       saveBrandToFirestore(user.uid, defaultBrand).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        console.error('Cloud brand reset error:', err)
       );
     }
   };
@@ -463,7 +576,7 @@ export default function App() {
 
     if (user) {
       resetDemoInFirestore(user.uid, existingIds).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        console.error('Cloud reset error:', err)
       );
     }
   };
@@ -498,6 +611,20 @@ export default function App() {
                 setSelectedPostId(null);
               }}
               onResetDemo={resetDemo}
+              onOpenClearModal={() => setClearModalOpen(true)}
+              accountUser={
+                user
+                  ? {
+                      displayName: user.displayName,
+                      email: user.email,
+                      photoURL: user.photoURL,
+                    }
+                  : null
+              }
+              authReady={authReady}
+              authBusy={authBusy}
+              onSignIn={handleSignIn}
+              onSignOut={handleSignOut}
             />
           </div>
 
@@ -618,44 +745,19 @@ export default function App() {
               <span>{publishedCount} publicadas</span>
             </div>
 
-            {user ? (
-              <div className="inline-flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs">
-                {user.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt={user.displayName || 'Cuenta'}
-                    referrerPolicy="no-referrer"
-                    className="w-5 h-5 rounded-full object-cover"
-                  />
-                ) : (
-                  <Cloud className="w-3.5 h-3.5 text-emerald-500" />
-                )}
-                <span className="max-w-[110px] truncate font-medium text-slate-700 dark:text-zinc-200 hidden sm:inline">
-                  {user.displayName || user.email}
-                </span>
-                <button
-                  type="button"
-                  disabled={authBusy}
-                  onClick={handleSignOut}
-                  title="Cerrar sesión de Firebase"
-                  aria-label="Cerrar sesión de Firebase"
-                  className="p-1 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-500 hover:text-slate-900 dark:hover:text-zinc-100 transition-colors"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
+            {(demoPostsCount > 0 || allCurrentBrandPosts.length > 0) && (
               <button
                 type="button"
-                disabled={authBusy || !authReady}
-                onClick={handleSignIn}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 whitespace-nowrap shrink-0 transition-colors disabled:opacity-50"
-                title="Inicia sesión con Google para sincronizar tus datos en Firebase"
+                onClick={() => setClearModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 whitespace-nowrap shrink-0 transition-colors"
+                title="Borrar contenido de prueba o vaciar marca"
               >
-                <Cloud className="w-3.5 h-3.5 text-indigo-500" />
-                <span>Sincronizar Firebase</span>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Borrar prueba</span>
               </button>
             )}
+
+            <PWAInstallButton />
 
             {activeView !== 'grid' && (
               <button
@@ -693,24 +795,6 @@ export default function App() {
             </button>
           </div>
         </div>
-
-        {syncError && (
-          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 pb-2.5">
-            <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 text-xs text-rose-700 dark:text-rose-300">
-              <span className="truncate">
-                Error de sincronización con Firebase: {syncError}
-              </span>
-              <button
-                type="button"
-                onClick={() => setSyncError(null)}
-                className="shrink-0 hover:opacity-75"
-                aria-label="Cerrar aviso"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Main Content Area */}
@@ -795,6 +879,20 @@ export default function App() {
         onUpdateBrand={updateBrand}
         onResetBrand={resetBrand}
       />
+
+      {/* Clear Demo / Brand Content Modal */}
+      <ClearContentModal
+        open={clearModalOpen}
+        demoCount={demoPostsCount}
+        currentBrandName={currentBrand.name}
+        currentBrandCount={allCurrentBrandPosts.length}
+        onClose={() => setClearModalOpen(false)}
+        onClearDemoOnly={clearDemoOnly}
+        onClearCurrentBrand={clearCurrentBrandPosts}
+      />
+
+      {/* PWA Auto-Update & Offline Status */}
+      <PWAStatusBanner />
     </div>
   );
 }

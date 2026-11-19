@@ -190,11 +190,13 @@ export async function ensureWorkspaceAndSeed(
   uid: string,
   displayName: string
 ): Promise<void> {
+  let isNewWorkspace = false;
   const userPath = `users/${uid}`;
   try {
     const userRef = doc(db, 'users', uid);
     const snap = await getDoc(userRef);
     if (!snap.exists()) {
+      isNewWorkspace = true;
       await setDoc(userRef, {
         ownerId: uid,
         displayName: sanitizeString(displayName, 120, 'Usuario'),
@@ -224,6 +226,9 @@ export async function ensureWorkspaceAndSeed(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, brandsPath);
   }
+
+  // Only seed demo posts when the user workspace is created for the first time
+  if (!isNewWorkspace) return;
 
   const postsPath = `users/${uid}/posts`;
   try {
@@ -360,6 +365,23 @@ export async function deletePostInFirestore(
   const path = `users/${uid}/posts/${postId}`;
   try {
     await deleteDoc(doc(db, 'users', uid, 'posts', postId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function deletePostsBatchInFirestore(
+  uid: string,
+  postIds: string[]
+): Promise<void> {
+  if (postIds.length === 0) return;
+  const path = `users/${uid}/posts`;
+  try {
+    const batch = writeBatch(db);
+    postIds.forEach((postId) => {
+      batch.delete(doc(db, 'users', uid, 'posts', postId));
+    });
+    await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }

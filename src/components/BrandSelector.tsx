@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, RotateCcw } from 'lucide-react';
+import { Check, ChevronDown, LogIn, LogOut, RotateCcw, Trash2 } from 'lucide-react';
 import { Brand, BrandId } from '../types/content';
+
+interface AccountUser {
+  displayName: string | null;
+  email: string | null;
+  photoURL: string | null;
+}
 
 interface BrandSelectorProps {
   brands: Brand[];
@@ -8,6 +14,12 @@ interface BrandSelectorProps {
   countsByBrand: Record<BrandId, number>;
   onSelectBrand: (brandId: BrandId) => void;
   onResetDemo: () => void;
+  onOpenClearModal: () => void;
+  accountUser: AccountUser | null;
+  authReady: boolean;
+  authBusy: boolean;
+  onSignIn: () => void;
+  onSignOut: () => void;
 }
 
 export function BrandSelector({
@@ -16,6 +28,12 @@ export function BrandSelector({
   countsByBrand,
   onSelectBrand,
   onResetDemo,
+  onOpenClearModal,
+  accountUser,
+  authReady,
+  authBusy,
+  onSignIn,
+  onSignOut,
 }: BrandSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -142,7 +160,18 @@ export function BrandSelector({
             })}
           </div>
 
-          <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800">
+          <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800 space-y-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                onOpenClearModal();
+                setOpen(false);
+              }}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Borrar contenido de prueba
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -154,6 +183,58 @@ export function BrandSelector({
               <RotateCcw className="w-3.5 h-3.5" />
               Restaurar piezas iniciales
             </button>
+          </div>
+
+          <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800">
+            {accountUser ? (
+              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  {accountUser.photoURL ? (
+                    <img
+                      src={accountUser.photoURL}
+                      alt={accountUser.displayName || 'Cuenta'}
+                      referrerPolicy="no-referrer"
+                      className="w-5 h-5 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-zinc-700 text-[10px] font-semibold flex items-center justify-center shrink-0">
+                      {(accountUser.displayName || accountUser.email || 'U')
+                        .charAt(0)
+                        .toUpperCase()}
+                    </span>
+                  )}
+                  <span className="text-[11px] font-medium text-slate-700 dark:text-zinc-200 truncate">
+                    {accountUser.displayName || accountUser.email}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={authBusy}
+                  onClick={() => {
+                    onSignOut();
+                    setOpen(false);
+                  }}
+                  title="Cerrar sesión"
+                  aria-label="Cerrar sesión"
+                  className="p-1 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-500 hover:text-slate-900 dark:hover:text-zinc-100 transition-colors shrink-0 disabled:opacity-50"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={authBusy || !authReady}
+                onClick={() => {
+                  onSignIn();
+                  setOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-zinc-100 hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors disabled:opacity-50"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Iniciar sesión con Google
+              </button>
+            )}
           </div>
         </div>
       )}
