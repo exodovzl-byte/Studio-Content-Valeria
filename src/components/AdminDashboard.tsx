@@ -4,6 +4,9 @@ import {
   Calendar,
   Check,
   CreditCard,
+  KeyRound,
+  Lock,
+  LogOut,
   Plus,
   Search,
   Settings2,
@@ -18,6 +21,8 @@ import {
 import {
   AccessConfig,
   AccessStatus,
+  AdminPinConfig,
+  LEGACY_PLACEHOLDER_EMAIL,
   UserAccount,
   dateInputToEndOfDay,
   formatDateShort,
@@ -32,8 +37,13 @@ interface AdminDashboardProps {
   accounts: UserAccount[];
   config: AccessConfig;
   adminEmail: string;
+  pinConfig: AdminPinConfig | null;
   onBackToStudio: () => void;
+  onLockAdmin: () => void;
+  onSignOut: () => void;
   onSaveConfig: (nextConfig: AccessConfig) => Promise<void>;
+  onVerifyCurrentPin: (pin: string) => Promise<boolean>;
+  onChangeAdminPin: (newPin: string) => Promise<void>;
   onApproveTrial: (
     account: UserAccount,
     days: number,
@@ -49,6 +59,7 @@ interface AdminDashboardProps {
   onUpdateAccount: (
     account: UserAccount,
     updates: {
+      email?: string;
       accessStatus: AccessStatus;
       accessExpiresAt: Date | null;
       hasUsedTrial: boolean;
@@ -140,6 +151,20 @@ function getAccountDisplayMeta(
       category: 'expired',
     };
   }
+  if (account.isAdminAccount) {
+    return {
+      label: 'Administrador (acceso permanente)',
+      colorClass: 'text-indigo-600 dark:text-indigo-400',
+      category: 'all',
+    };
+  }
+  if (account.isLegacyWorkspace) {
+    return {
+      label: 'Cuenta registrada previa (sin plan asignado)',
+      colorClass: 'text-amber-600 dark:text-amber-400',
+      category: 'all',
+    };
+  }
   return {
     label: 'Registrada sin plan',
     colorClass: 'text-slate-500 dark:text-zinc-400',
@@ -151,8 +176,13 @@ export function AdminDashboard({
   accounts,
   config,
   adminEmail,
+  pinConfig,
   onBackToStudio,
+  onLockAdmin,
+  onSignOut,
   onSaveConfig,
+  onVerifyCurrentPin,
+  onChangeAdminPin,
   onApproveTrial,
   onApproveSubscription,
   onUpdateAccount,
@@ -166,6 +196,7 @@ export function AdminDashboard({
 
   // Per-account custom editor state
   const [editingUid, setEditingUid] = useState<string | null>(null);
+  const [editEmail, setEditEmail] = useState<string>('');
   const [editStatus, setEditStatus] = useState<AccessStatus>('trial_active');
   const [editDateStr, setEditDateStr] = useState<string>('');
   const [editHasUsedTrial, setEditHasUsedTrial] = useState<boolean>(false);
@@ -178,9 +209,28 @@ export function AdminDashboard({
   const [savingConfig, setSavingConfig] = useState(false);
   const [configSavedMsg, setConfigSavedMsg] = useState<string | null>(null);
 
+  // Admin PIN change form state
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinLength, setNewPinLength] = useState<4 | 6>(
+    pinConfig?.pinLength ?? 4
+  );
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [savingPin, setSavingPin] = useState(false);
+  const [pinMsg, setPinMsg] = useState<{
+    type: 'ok' | 'err';
+    text: string;
+  } | null>(null);
+
   useEffect(() => {
     setDraftConfig(config);
   }, [config]);
+
+  useEffect(() => {
+    if (pinConfig) {
+      setNewPinLength(pinConfig.pinLength);
+    }
+  }, [pinConfig]);
 
   const nowMs = Date.now();
 
@@ -256,8 +306,11 @@ export function AdminDashboard({
       return;
     }
     setEditingUid(acc.uid);
+    setEditEmail(
+      acc.email === LEGACY_PLACEHOLDER_EMAIL ? '' : acc.email || ''
+    );
     setEditStatus(
-      acc.accessStatus === 'pending_trial'
+      acc.accessStatus === 'pending_trial' || acc.accessStatus === 'unassigned'
         ? 'trial_active'
         : acc.accessStatus === 'pending_subscription'
           ? 'subscription_active'
@@ -340,6 +393,7 @@ export function AdminDashboard({
             : null;
 
       await onUpdateAccount(acc, {
+        email: editEmail.trim() || undefined,
         accessStatus: editStatus,
         accessExpiresAt: parsedDate,
         hasUsedTrial:
@@ -348,9 +402,62 @@ export function AdminDashboard({
         adminNote: editAdminNote,
       });
       setEditingUid(null);
-      setActionMessage(`Cambios guardados para ${acc.email}.`);
+      setActionMessage(
+        `Cambios guardados para ${editEmail.trim() || acc.displayName || acc.uid}.`
+      );
     } finally {
       setBusyUid(null);
+    }
+  };
+
+  const handlePinChangeSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setPinMsg(null);
+    const cleanNew = newPinInput.trim();
+    const cleanConfirm = confirmPinInput.trim();
+
+    if (cleanNew.length !== newPinLength || !/^\d+$/.test(cleanNew)) {
+      setPinMsg({
+        type: 'err',
+        text: `El nuevo PIN debe tener exactamente ${newPinLength} dígitos numéricos.`,
+      });
+      return;
+    }
+    if (cleanNew !== cleanConfirm) {
+      setPinMsg({
+        type: 'err',
+        text: 'La confirmación del nuevo PIN no coincide.',
+      });
+      return;
+    }
+
+    setSavingPin(true);
+    try {
+      if (pinConfig) {
+        const validCurrent = await onVerifyCurrentPin(currentPinInput.trim());
+        if (!validCurrent) {
+          setPinMsg({
+            type: 'err',
+            text: 'El PIN actual ingresado es incorrecto.',
+          });
+          return;
+        }
+      }
+      await onChangeAdminPin(cleanNew);
+      setCurrentPinInput('');
+      setNewPinInput('');
+      setConfirmPinInput('');
+      setPinMsg({
+        type: 'ok',
+        text: `Código PIN actualizado correctamente (${newPinLength} dígitos).`,
+      });
+    } catch {
+      setPinMsg({
+        type: 'err',
+        text: 'No se pudo actualizar el código PIN. Intenta de nuevo.',
+      });
+    } finally {
+      setSavingPin(false);
     }
   };
 
@@ -440,11 +547,31 @@ export function AdminDashboard({
 
           <button
             type="button"
+            onClick={onLockAdmin}
+            title="Bloquear panel con PIN"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            Bloquear
+          </button>
+
+          <button
+            type="button"
             onClick={onBackToStudio}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Ir al Estudio
+          </button>
+
+          <button
+            type="button"
+            onClick={onSignOut}
+            title="Cerrar sesión y volver al Lobby"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 transition-colors whitespace-nowrap shrink-0"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Cerrar sesión
           </button>
         </div>
       </div>
@@ -616,13 +743,15 @@ export function AdminDashboard({
 
                         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-zinc-400">
                           <span className="font-mono text-[11px] text-slate-700 dark:text-zinc-300">
-                            {acc.email}
+                            {acc.email === LEGACY_PLACEHOLDER_EMAIL
+                              ? 'Correo pendiente de sincronizar (al próximo acceso)'
+                              : acc.email}
                           </span>
                           <span aria-hidden="true">·</span>
                           <span className="font-mono tabular-nums text-[11px]">
                             Registro: {formatDateShort(acc.createdAtMs)}
                           </span>
-                          {acc.accessExpiresAtMs && (
+                          {acc.accessExpiresAtMs && !acc.isAdminAccount && (
                             <>
                               <span aria-hidden="true">·</span>
                               <span className="font-mono tabular-nums text-[11px]">
@@ -631,12 +760,16 @@ export function AdminDashboard({
                               </span>
                             </>
                           )}
-                          <span aria-hidden="true">·</span>
-                          <span className="text-[11px]">
-                            {acc.hasUsedTrial
-                              ? 'Prueba ya usada'
-                              : 'Sin prueba previa'}
-                          </span>
+                          {!acc.isAdminAccount && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-[11px]">
+                                {acc.hasUsedTrial
+                                  ? 'Prueba ya usada'
+                                  : 'Sin prueba previa'}
+                              </span>
+                            </>
+                          )}
                         </div>
 
                         {(acc.paymentReference || acc.userNote || acc.adminNote) && (
@@ -670,77 +803,98 @@ export function AdminDashboard({
                       </div>
 
                       {/* Quick Action Controls */}
-                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => handleQuickApproveTrial(acc)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
-                          title={`Aprobar modo prueba por ${config.trialDays} días`}
-                        >
-                          <UserCheck className="w-3.5 h-3.5" />
-                          Prueba ({config.trialDays}d)
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => handleQuickApproveSub(acc)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors whitespace-nowrap disabled:opacity-50"
-                          title={`Aprobar o renovar suscripción mensual (+${config.subscriptionCycleDays} días)`}
-                        >
-                          <CreditCard className="w-3.5 h-3.5" />
-                          Suscripción (+{config.subscriptionCycleDays}d)
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => openEditorFor(acc)}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap ${
-                            isEditing
-                              ? 'border-indigo-500 bg-indigo-600 text-white'
-                              : 'border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800'
-                          }`}
-                        >
-                          <SlidersHorizontal className="w-3.5 h-3.5" />
-                          Editar fecha
-                        </button>
-
-                        {acc.accessStatus !== 'suspended' && (
+                      {acc.isAdminAccount ? (
+                        <div className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 shrink-0">
+                          Cuenta protegida de administrador
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             disabled={isBusy}
-                            onClick={() =>
-                              handleQuickSuspend(
-                                acc,
-                                acc.accessStatus === 'pending_trial' ||
-                                  acc.accessStatus === 'pending_subscription'
-                                  ? 'rejected'
-                                  : 'suspended'
-                              )
-                            }
-                            className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
-                            title="Negar o suspender acceso"
+                            onClick={() => handleQuickApproveTrial(acc)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
+                            title={`Aprobar modo prueba por ${config.trialDays} días`}
                           >
-                            <UserX className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">
-                              {acc.accessStatus === 'pending_trial' ||
-                              acc.accessStatus === 'pending_subscription'
-                                ? 'Rechazar'
-                                : 'Suspender'}
-                            </span>
+                            <UserCheck className="w-3.5 h-3.5" />
+                            Prueba ({config.trialDays}d)
                           </button>
-                        )}
-                      </div>
+
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleQuickApproveSub(acc)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors whitespace-nowrap disabled:opacity-50"
+                            title={`Aprobar o renovar suscripción mensual (+${config.subscriptionCycleDays} días)`}
+                          >
+                            <CreditCard className="w-3.5 h-3.5" />
+                            Suscripción (+{config.subscriptionCycleDays}d)
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => openEditorFor(acc)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap ${
+                              isEditing
+                                ? 'border-indigo-500 bg-indigo-600 text-white'
+                                : 'border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800'
+                            }`}
+                          >
+                            <SlidersHorizontal className="w-3.5 h-3.5" />
+                            Editar fecha
+                          </button>
+
+                          {acc.accessStatus !== 'suspended' && (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() =>
+                                handleQuickSuspend(
+                                  acc,
+                                  acc.accessStatus === 'pending_trial' ||
+                                    acc.accessStatus === 'pending_subscription'
+                                    ? 'rejected'
+                                    : 'suspended'
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
+                              title="Negar o suspender acceso"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">
+                                {acc.accessStatus === 'pending_trial' ||
+                                acc.accessStatus === 'pending_subscription'
+                                  ? 'Rechazar'
+                                  : 'Suspender'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Inline Custom Date & Access Editor */}
-                    {isEditing && (
+                    {isEditing && !acc.isAdminAccount && (
                       <form
                         onSubmit={(e) => handleSaveAccountEdit(e, acc)}
                         className="pt-3 mt-1 border-t border-slate-200 dark:border-zinc-800 bg-slate-50/80 dark:bg-zinc-950/60 -mx-4 px-4 pb-1 space-y-3"
                       >
+                        {acc.email === LEGACY_PLACEHOLDER_EMAIL && (
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-600 dark:text-zinc-300 mb-1">
+                              Correo de referencia (opcional, se sincroniza automático al entrar)
+                            </label>
+                            <input
+                              type="email"
+                              maxLength={180}
+                              value={editEmail}
+                              onChange={(e) => setEditEmail(e.target.value)}
+                              placeholder="Ej. cliente@gmail.com"
+                              className="w-full sm:max-w-md min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs text-slate-900 dark:text-zinc-100"
+                            />
+                          </div>
+                        )}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                           <div>
                             <label className="block text-[11px] font-semibold text-slate-600 dark:text-zinc-300 mb-1">
@@ -863,8 +1017,9 @@ export function AdminDashboard({
           )}
         </div>
       ) : (
-        /* ==================== TAB 2: CUSTOMIZE LOBBY, TRIAL & MONTHLY SUBSCRIPTION ==================== */
-        <form onSubmit={handleConfigSubmit} className="space-y-5">
+        /* ==================== TAB 2: CUSTOMIZE LOBBY, TRIAL, MONTHLY SUBSCRIPTION & ADMIN PIN ==================== */
+        <div className="space-y-5">
+          <form onSubmit={handleConfigSubmit} className="space-y-5">
           {configSavedMsg && (
             <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-800 dark:text-emerald-200">
               <span>{configSavedMsg}</span>
@@ -1198,17 +1353,148 @@ export function AdminDashboard({
             </div>
           </section>
 
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={savingConfig}
-              className="min-h-[44px] inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
-            >
-              <Check className="w-4 h-4" />
-              {savingConfig ? 'Guardando...' : 'Guardar cambios del Lobby y planes'}
-            </button>
-          </div>
-        </form>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={savingConfig}
+                className="min-h-[44px] inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Check className="w-4 h-4" />
+                {savingConfig ? 'Guardando...' : 'Guardar cambios del Lobby y planes'}
+              </button>
+            </div>
+          </form>
+
+          {/* Section 4: Admin PIN Security (4 or 6 digits) */}
+          <form
+            onSubmit={handlePinChangeSubmit}
+            className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/75 p-5 space-y-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-start gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-600/12 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Código PIN del Panel de Administrador
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+                    {pinConfig
+                      ? `PIN activo de ${pinConfig.pinLength} dígitos. Puedes cambiarlo aquí a 4 o 6 dígitos.`
+                      : 'Configura un código PIN de 4 o 6 dígitos para proteger este panel.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="inline-flex items-center bg-slate-100 dark:bg-zinc-950 p-1 rounded-lg border border-slate-200 dark:border-zinc-800">
+                {([4, 6] as const).map((len) => (
+                  <button
+                    key={len}
+                    type="button"
+                    onClick={() => {
+                      setNewPinLength(len);
+                      setNewPinInput('');
+                      setConfirmPinInput('');
+                      setPinMsg(null);
+                    }}
+                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      newPinLength === len
+                        ? 'bg-white dark:bg-zinc-800 text-slate-900 dark:text-white shadow-2xs'
+                        : 'text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100'
+                    }`}
+                  >
+                    {len} dígitos
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {pinMsg && (
+              <div
+                className={`rounded-xl px-3.5 py-2.5 text-xs border ${
+                  pinMsg.type === 'ok'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                    : 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-200'
+                }`}
+              >
+                {pinMsg.text}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              {pinConfig && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
+                    PIN actual ({pinConfig.pinLength} dígitos)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={pinConfig.pinLength}
+                    required
+                    value={currentPinInput}
+                    onChange={(e) =>
+                      setCurrentPinInput(e.target.value.replace(/\D/g, ''))
+                    }
+                    placeholder={'•'.repeat(pinConfig.pinLength)}
+                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950 text-xs font-mono tracking-widest text-slate-900 dark:text-zinc-100"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
+                  Nuevo PIN ({newPinLength} dígitos)
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={newPinLength}
+                  required
+                  value={newPinInput}
+                  onChange={(e) =>
+                    setNewPinInput(e.target.value.replace(/\D/g, ''))
+                  }
+                  placeholder={'•'.repeat(newPinLength)}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950 text-xs font-mono tracking-widest text-slate-900 dark:text-zinc-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
+                  Confirmar nuevo PIN
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={newPinLength}
+                  required
+                  value={confirmPinInput}
+                  onChange={(e) =>
+                    setConfirmPinInput(e.target.value.replace(/\D/g, ''))
+                  }
+                  placeholder={'•'.repeat(newPinLength)}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950 text-xs font-mono tracking-widest text-slate-900 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={savingPin}
+                className="min-h-[40px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15 transition-colors disabled:opacity-50"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                {savingPin ? 'Actualizando PIN...' : 'Guardar nuevo PIN'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </div>
   );

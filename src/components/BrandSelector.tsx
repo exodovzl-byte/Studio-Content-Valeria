@@ -262,8 +262,8 @@ export function BrandSelector({
             )}
 
             {accountUser ? (
-              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-                <div className="flex items-center gap-2 min-w-0">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 px-2.5 py-1.5 min-w-0">
                   {accountUser.photoURL ? (
                     <img
                       src={accountUser.photoURL}
@@ -296,11 +296,10 @@ export function BrandSelector({
                     onSignOut();
                     setOpen(false);
                   }}
-                  title="Cerrar sesión"
-                  aria-label="Cerrar sesión"
-                  className="p-1 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-500 hover:text-slate-900 dark:hover:text-zinc-100 transition-colors shrink-0 disabled:opacity-50"
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
                 >
                   <LogOut className="w-3.5 h-3.5" />
+                  Cerrar sesión / Cambiar correo
                 </button>
               </div>
             ) : (

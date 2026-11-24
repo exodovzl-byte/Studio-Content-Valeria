@@ -1,6 +1,6 @@
 /**
  * Phase 0 Security TDD Test Specification for OmniContent Studio Firestore Rules.
- * Verifies all 12 "Dirty Dozen" adversarial payloads return PERMISSION_DENIED.
+ * Verifies all adversarial payloads return PERMISSION_DENIED.
  */
 
 export interface DirtyDozenCase {
@@ -96,27 +96,26 @@ export const DIRTY_DOZEN_TESTS: DirtyDozenCase[] = [
   },
   {
     id: 8,
-    name: 'Cross-User PII Account List',
+    name: 'Cross-User PII & Workspace List',
     actor: 'regularUser',
     operation: 'list',
-    path: 'accounts',
+    path: 'users',
     expected: 'PERMISSION_DENIED',
   },
   {
     id: 9,
-    name: 'Non-Admin Pricing Config Tampering',
+    name: 'Non-Admin Admin PIN Hash Read Attempt',
     actor: 'regularUser',
-    operation: 'update',
-    path: 'appConfig/access',
-    payload: { subscriptionPrice: '$0 / mes' },
+    operation: 'get',
+    path: 'adminSecurity/pin',
     expected: 'PERMISSION_DENIED',
   },
   {
     id: 10,
-    name: 'Unverified Admin Email Spoofing',
+    name: 'Unverified Admin Email Spoofing on PIN Security',
     actor: 'unverifiedAdminSpoof',
-    operation: 'list',
-    path: 'accounts',
+    operation: 'get',
+    path: 'adminSecurity/pin',
     expected: 'PERMISSION_DENIED',
   },
   {
@@ -130,11 +129,16 @@ export const DIRTY_DOZEN_TESTS: DirtyDozenCase[] = [
   },
   {
     id: 12,
-    name: 'Oversized Document ID Poisoning',
+    name: 'Non-Admin PIN Hash Overwrite Attempt',
     actor: 'regularUser',
-    operation: 'create',
-    path: `users/user_a/posts/${'a'.repeat(160)}`,
-    payload: { id: 'a'.repeat(160), ownerId: 'user_a', brandId: 'exodo', title: 'Spam' },
+    operation: 'update',
+    path: 'adminSecurity/pin',
+    payload: {
+      pinHash: 'a'.repeat(64),
+      pinSalt: 'b'.repeat(32),
+      pinLength: 4,
+      updatedAt: 'SERVER_TIME',
+    },
     expected: 'PERMISSION_DENIED',
   },
 ];

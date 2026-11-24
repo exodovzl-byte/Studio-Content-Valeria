@@ -213,7 +213,7 @@ export function AccessLobby({
                 className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span>Salir</span>
+                <span>Cerrar sesión</span>
               </button>
             ) : (
               <button
@@ -496,14 +496,27 @@ export function AccessLobby({
                 </button>
               </div>
 
-              {config.supportContact && (
-                <p className="text-[11px] text-center text-slate-500 dark:text-zinc-400">
-                  ¿Necesitas ayuda con tu aprobación? Contacto:{' '}
-                  <span className="font-medium text-slate-700 dark:text-zinc-300">
-                    {config.supportContact}
+              <div className="pt-1 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-zinc-400">
+                {config.supportContact ? (
+                  <span>
+                    ¿Necesitas ayuda?{' '}
+                    <span className="font-medium text-slate-700 dark:text-zinc-300">
+                      {config.supportContact}
+                    </span>
                   </span>
-                </p>
-              )}
+                ) : (
+                  <span />
+                )}
+                <button
+                  type="button"
+                  disabled={authBusy}
+                  onClick={onSignOut}
+                  className="inline-flex items-center gap-1 font-medium text-rose-600 dark:text-rose-400 hover:underline disabled:opacity-50"
+                >
+                  <LogOut className="w-3 h-3" />
+                  Usar otro correo (Cerrar sesión)
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -556,15 +569,26 @@ export function AccessLobby({
                   </span>
                 </p>
               </div>
-              {editingPending && (
+              <div className="flex flex-wrap items-center gap-3">
+                {editingPending && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingPending(false)}
+                    className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    Volver a mi solicitud pendiente
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setEditingPending(false)}
-                  className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                  disabled={authBusy}
+                  onClick={onSignOut}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
                 >
-                  Volver a mi solicitud pendiente
+                  <LogOut className="w-3.5 h-3.5" />
+                  Cambiar correo
                 </button>
-              )}
+              </div>
             </div>
 
             {/* Plan Selection Cards */}

@@ -243,6 +243,38 @@
       },
       "required": ["uid", "email", "createdAt"]
     },
+    "AdminSecurity": {
+      "title": "AdminSecurity",
+      "description": "Admin-only salted SHA-256 PIN verification record (4 or 6 digits).",
+      "type": "object",
+      "properties": {
+        "pinHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 hex digest of salt + PIN."
+        },
+        "pinSalt": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$",
+          "description": "Random hex salt used to hash the admin PIN."
+        },
+        "pinLength": {
+          "type": "number",
+          "enum": [4, 6],
+          "description": "Configured PIN digit length (4 or 6)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last PIN update."
+        }
+      },
+      "required": ["pinHash", "pinSalt", "pinLength", "updatedAt"]
+    },
     "UserWorkspace": {
       "title": "UserWorkspace",
       "description": "Root workspace document owned by an authenticated user.",
@@ -615,6 +647,12 @@
         "$ref": "#/entities/AdminRecord"
       },
       "description": "Trusted administrator directory managed by the bootstrap admin."
+    },
+    "/adminSecurity/{settingId}": {
+      "schema": {
+        "$ref": "#/entities/AdminSecurity"
+      },
+      "description": "Admin-only salted SHA-256 PIN verification settings (4 or 6 digits)."
     },
     "/users/{userId}": {
       "schema": {

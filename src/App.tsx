@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   User,
   onAuthStateChanged,
+  reauthenticateWithPopup,
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
@@ -10,6 +11,7 @@ import {
   CreditCard,
   Kanban,
   LayoutGrid,
+  LogOut,
   Moon,
   PanelRight,
   Plus,
@@ -22,6 +24,7 @@ import {
 } from 'lucide-react';
 import { AccessLobby } from './components/AccessLobby';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AdminPinModal } from './components/AdminPinModal';
 import { BrandManagerModal } from './components/BrandManagerModal';
 import { BrandSelector } from './components/BrandSelector';
 import { CalendarView } from './components/CalendarView';
@@ -52,11 +55,14 @@ import {
   ensureUserAccount,
   refreshUserAccountFromServer,
   saveAccessConfig,
+  saveAdminPin,
   submitSubscriptionRequest,
   submitTrialRequest,
   subscribeToAccessConfig,
+  subscribeToAdminPinConfig,
   subscribeToAllAccounts,
   subscribeToUserAccount,
+  verifyAdminPin,
 } from './services/accessFirestore';
 import {
   createBrandInFirestore,
@@ -75,6 +81,7 @@ import {
 } from './services/studioFirestore';
 import {
   AccessConfig,
+  AdminPinConfig,
   DEFAULT_ACCESS_CONFIG,
   UserAccount,
   formatDateShort,
@@ -178,6 +185,12 @@ export default function App() {
   const [accessChecked, setAccessChecked] = useState<boolean>(false);
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [allAccounts, setAllAccounts] = useState<UserAccount[]>([]);
+  const [adminPinConfig, setAdminPinConfig] = useState<AdminPinConfig | null>(
+    null
+  );
+  const [adminPinLoaded, setAdminPinLoaded] = useState<boolean>(false);
+  const [adminPinUnlocked, setAdminPinUnlocked] = useState<boolean>(false);
+  const [adminPinModalOpen, setAdminPinModalOpen] = useState<boolean>(false);
   const [adminModeOpen, setAdminModeOpen] = useState<boolean>(false);
   const [renewalModalOpen, setRenewalModalOpen] = useState<boolean>(false);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
@@ -236,6 +249,10 @@ export default function App() {
         setIsAdmin(false);
         setUserAccount(null);
         setAllAccounts([]);
+        setAdminPinConfig(null);
+        setAdminPinLoaded(false);
+        setAdminPinUnlocked(false);
+        setAdminPinModalOpen(false);
         setAdminModeOpen(false);
         setAccessChecked(true);
         setCloudLoaded(false);
@@ -251,6 +268,10 @@ export default function App() {
       setIsAdmin(false);
       setUserAccount(null);
       setAllAccounts([]);
+      setAdminPinConfig(null);
+      setAdminPinLoaded(false);
+      setAdminPinUnlocked(false);
+      setAdminPinModalOpen(false);
       setAccessChecked(true);
       return;
     }
@@ -258,6 +279,7 @@ export default function App() {
     let cancelled = false;
     let unsubAccount: (() => void) | null = null;
     let unsubAllAccounts: (() => void) | null = null;
+    let unsubAdminPin: (() => void) | null = null;
 
     setAccessChecked(false);
 
@@ -270,10 +292,24 @@ export default function App() {
           setUserAccount(null);
           setAccessChecked(true);
           unsubAllAccounts = subscribeToAllAccounts(
+            user.uid,
+            user.email || '',
             (accountsList) => {
               if (!cancelled) setAllAccounts(accountsList);
             },
             (err) => console.error('Admin accounts listener error:', err)
+          );
+          unsubAdminPin = subscribeToAdminPinConfig(
+            (pinCfg) => {
+              if (!cancelled) {
+                setAdminPinConfig(pinCfg);
+                setAdminPinLoaded(true);
+              }
+            },
+            (err) => {
+              console.error('Admin PIN config listener error:', err);
+              if (!cancelled) setAdminPinLoaded(true);
+            }
           );
           return;
         }
@@ -319,6 +355,7 @@ export default function App() {
       cancelled = true;
       unsubAccount?.();
       unsubAllAccounts?.();
+      unsubAdminPin?.();
     };
   }, [authReady, user]);
 
@@ -577,11 +614,85 @@ export default function App() {
     }
   };
 
+  const handleRequestOpenAdmin = () => {
+    if (!isAdmin) return;
+    if (adminPinUnlocked) {
+      setAdminModeOpen(true);
+    } else {
+      setAdminPinModalOpen(true);
+    }
+  };
+
+  const handleLockAdmin = () => {
+    setAdminPinUnlocked(false);
+    setAdminModeOpen(false);
+  };
+
+  const handleReauthenticateForPinReset = async (): Promise<boolean> => {
+    const activeUser = auth.currentUser;
+    if (!activeUser) return false;
+    try {
+      await reauthenticateWithPopup(activeUser, googleProvider);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleSignOut = async () => {
     setAuthBusy(true);
     try {
-      await signOut(auth);
+      // Flush any pending cloud saves before signing out
+      const activeUser = userRef.current;
+      if (activeUser) {
+        const flushes: Promise<unknown>[] = [];
+        Object.entries(pendingPostSaves.current).forEach(([postId, snapshot]) => {
+          if (postSyncTimers.current[postId]) {
+            clearTimeout(postSyncTimers.current[postId]);
+            delete postSyncTimers.current[postId];
+          }
+          delete pendingPostSaves.current[postId];
+          flushes.push(
+            updatePostInFirestore(activeUser.uid, snapshot).catch(() => {})
+          );
+        });
+        Object.entries(pendingBrandSaves.current).forEach(
+          ([brandId, snapshot]) => {
+            if (brandSyncTimers.current[brandId]) {
+              clearTimeout(brandSyncTimers.current[brandId]);
+              delete brandSyncTimers.current[brandId];
+            }
+            delete pendingBrandSaves.current[brandId];
+            flushes.push(
+              saveBrandToFirestore(activeUser.uid, snapshot).catch(() => {})
+            );
+          }
+        );
+        if (flushes.length > 0) {
+          await Promise.allSettled(flushes);
+        }
+      }
+
+      // Clear local workspace cache so switching to another email starts cleanly in the Lobby
+      try {
+        localStorage.removeItem(STORAGE_POSTS_KEY);
+        localStorage.removeItem(STORAGE_BRANDS_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+
       setAdminModeOpen(false);
+      setAdminPinUnlocked(false);
+      setAdminPinModalOpen(false);
+      setSelectedPostId(null);
+      setRenewalModalOpen(false);
+      postsRef.current = INITIAL_POSTS;
+      brandsRef.current = BRANDS;
+      setPosts(INITIAL_POSTS);
+      setBrands(BRANDS);
+      setSelectedBrandId(BRANDS[0].id);
+
+      await signOut(auth);
     } finally {
       setAuthBusy(false);
     }
@@ -1082,7 +1193,7 @@ export default function App() {
     userDaysLeft !== null &&
     userDaysLeft <= 5;
 
-  if (isAdmin && adminModeOpen) {
+  if (isAdmin && adminModeOpen && adminPinUnlocked) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
         <header className="sticky top-0 z-30 pt-safe border-b border-slate-200 dark:border-zinc-800/90 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md">
@@ -1120,8 +1231,19 @@ export default function App() {
             accounts={allAccounts}
             config={accessConfig}
             adminEmail={user.email || ''}
+            pinConfig={adminPinConfig}
             onBackToStudio={() => setAdminModeOpen(false)}
+            onLockAdmin={handleLockAdmin}
+            onSignOut={handleSignOut}
             onSaveConfig={saveAccessConfig}
+            onVerifyCurrentPin={async (pin) => {
+              if (!adminPinConfig) return true;
+              return verifyAdminPin(pin, adminPinConfig);
+            }}
+            onChangeAdminPin={async (newPin) => {
+              const saved = await saveAdminPin(newPin);
+              setAdminPinConfig(saved);
+            }}
             onApproveTrial={adminApproveTrial}
             onApproveSubscription={adminApproveSubscription}
             onUpdateAccount={adminUpdateAccount}
@@ -1180,7 +1302,7 @@ export default function App() {
               onSignOut={handleSignOut}
               isAdmin={isAdmin}
               pendingAdminCount={pendingAdminCount}
-              onOpenAdmin={() => setAdminModeOpen(true)}
+              onOpenAdmin={handleRequestOpenAdmin}
               planSummary={userPlanSummary}
               onOpenRenewal={() => setRenewalModalOpen(true)}
             />
@@ -1241,13 +1363,13 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: Desktop Primary Action, Admin Access & Mobile Utilities */}
+          {/* Zone 3: Desktop Primary Action, Admin Access, Sign Out & Mobile Utilities */}
           <div className="flex items-center gap-1.5 shrink-0">
             {isAdmin && (
               <button
                 type="button"
-                onClick={() => setAdminModeOpen(true)}
-                title="Abrir Panel de Administrador"
+                onClick={handleRequestOpenAdmin}
+                title="Abrir Panel de Administrador (requiere PIN)"
                 aria-label="Abrir Panel de Administrador"
                 className="inline-flex items-center justify-center gap-1.5 min-w-[38px] min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15 transition-colors whitespace-nowrap shrink-0"
               >
@@ -1285,6 +1407,18 @@ export default function App() {
               ) : (
                 <Moon className="w-4 h-4" />
               )}
+            </button>
+
+            <button
+              type="button"
+              disabled={authBusy}
+              onClick={handleSignOut}
+              title="Cerrar sesión y volver al Lobby"
+              aria-label="Cerrar sesión y volver al Lobby"
+              className="inline-flex items-center justify-center gap-1.5 min-w-[38px] min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+            >
+              <LogOut className="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Cerrar sesión</span>
             </button>
 
             <button
@@ -1628,6 +1762,31 @@ export default function App() {
           await submitSubscriptionRequest(user.uid, userAccount, data);
         }}
       />
+
+      {/* Admin 4/6-Digit PIN Gate Modal */}
+      {isAdmin && (
+        <AdminPinModal
+          open={adminPinModalOpen}
+          pinConfig={adminPinConfig}
+          pinConfigLoaded={adminPinLoaded}
+          adminEmail={user.email || ''}
+          onClose={() => setAdminPinModalOpen(false)}
+          onVerifyPin={async (pin) => {
+            if (!adminPinConfig) return false;
+            return verifyAdminPin(pin, adminPinConfig);
+          }}
+          onSaveNewPin={async (newPin) => {
+            const saved = await saveAdminPin(newPin);
+            setAdminPinConfig(saved);
+          }}
+          onReauthenticateForReset={handleReauthenticateForPinReset}
+          onUnlocked={() => {
+            setAdminPinUnlocked(true);
+            setAdminPinModalOpen(false);
+            setAdminModeOpen(true);
+          }}
+        />
+      )}
 
       {/* PWA Auto-Update & Offline Status */}
       <PWAStatusBanner />

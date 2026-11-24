@@ -26,6 +26,13 @@ export interface AccessConfig {
   updatedAtMs?: number | null;
 }
 
+export interface AdminPinConfig {
+  pinHash: string;
+  pinSalt: string;
+  pinLength: 4 | 6;
+  updatedAtMs: number | null;
+}
+
 export interface UserAccount {
   uid: string;
   email: string;
@@ -43,9 +50,14 @@ export interface UserAccount {
   approvedAtMs: number | null;
   createdAtMs: number | null;
   updatedAtMs: number | null;
+  /** True when discovered from legacy /users/{uid} before an /accounts/{uid} doc exists */
+  isLegacyWorkspace?: boolean;
+  /** True when this account belongs to the active administrator */
+  isAdminAccount?: boolean;
 }
 
 export const BOOTSTRAP_ADMIN_EMAIL = 'exodovzl@gmail.com';
+export const LEGACY_PLACEHOLDER_EMAIL = 'pendiente@sincronizar.app';
 
 export const DEFAULT_ACCESS_CONFIG: AccessConfig = {
   lobbyTitle: 'OmniContent Studio',

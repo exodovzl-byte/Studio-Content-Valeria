@@ -91,6 +91,15 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAdminSecurity(data) {
+      return data.keys().hasAll(['pinHash', 'pinSalt', 'pinLength', 'updatedAt'])
+        && data.keys().hasOnly(['pinHash', 'pinSalt', 'pinLength', 'updatedAt'])
+        && data.pinHash is string && data.pinHash.size() == 64 && data.pinHash.matches('^[a-f0-9]{64}$')
+        && data.pinSalt is string && data.pinSalt.size() >= 16 && data.pinSalt.size() <= 64 && data.pinSalt.matches('^[a-f0-9]+$')
+        && data.pinLength is number && data.pinLength in [4, 6]
+        && data.updatedAt is timestamp;
+    }
+
     function isValidAccount(data, userId) {
       return data.keys().hasAll([
           'uid', 'email', 'displayName', 'businessName', 'accessStatus',
@@ -267,6 +276,29 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ==================== ADMIN SECURITY (4/6-DIGIT PIN HASH) ====================
+    match /adminSecurity/{settingId} {
+      allow get: if isValidId(settingId) && settingId == 'pin' && isAdmin();
+      allow list: if false;
+
+      allow create: if isValidId(settingId)
+        && settingId == 'pin'
+        && isValidAdminSecurity(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isValidId(settingId)
+        && settingId == 'pin'
+        && isValidAdminSecurity(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'pinHash', 'pinSalt', 'pinLength', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
     // ==================== ADMINS REGISTRY ====================
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && (isOwner(adminId) || isBootstrapAdmin());
@@ -312,15 +344,14 @@ service cloud.firestore {
       allow update: if isValidId(userId)
         && isValidAccount(incoming(), userId)
         && incoming().uid == existing().uid
-        && incoming().email == existing().email
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Tier 1: Admin monitoring, approvals, custom dates, suspensions & notes
+          // Tier 1: Admin monitoring, approvals, custom dates, legacy email update, suspensions & notes
           (
             isAdmin()
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'displayName', 'businessName', 'accessStatus', 'requestedPlan',
+              'email', 'displayName', 'businessName', 'accessStatus', 'requestedPlan',
               'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
               'paymentReference', 'userNote', 'adminNote', 'requestedAt',
               'approvedAt', 'updatedAt'
@@ -329,6 +360,7 @@ service cloud.firestore {
           // Tier 2A: Owner submitting a trial request (only if never used trial and not suspended)
           (
             isOwner(userId)
+            && incoming().email == existing().email
             && existing().hasUsedTrial == false
             && existing().accessStatus != 'suspended'
             && incoming().hasUsedTrial == existing().hasUsedTrial
@@ -347,6 +379,7 @@ service cloud.firestore {
           // Tier 2B: Owner submitting a monthly subscription or renewal payment request
           (
             isOwner(userId)
+            && incoming().email == existing().email
             && incoming().hasUsedTrial == existing().hasUsedTrial
             && incoming().trialDaysGranted == existing().trialDaysGranted
             && incoming().accessExpiresAt == existing().accessExpiresAt
@@ -363,6 +396,7 @@ service cloud.firestore {
           // Tier 2C: Active user submitting early monthly renewal without losing current active access
           (
             isOwner(userId)
+            && incoming().email == existing().email
             && existing().accessStatus in ['trial_active', 'subscription_active']
             && incoming().accessStatus == existing().accessStatus
             && incoming().hasUsedTrial == existing().hasUsedTrial
@@ -376,6 +410,22 @@ service cloud.firestore {
               'displayName', 'businessName', 'requestedPlan',
               'paymentReference', 'userNote', 'requestedAt', 'updatedAt'
             ])
+          ) ||
+          // Tier 2D: Legacy pre-registered owner syncing their verified email on first login
+          (
+            isOwner(userId)
+            && existing().email == 'pendiente@sincronizar.app'
+            && incoming().email == request.auth.token.email
+            && incoming().accessStatus == existing().accessStatus
+            && incoming().requestedPlan == existing().requestedPlan
+            && incoming().hasUsedTrial == existing().hasUsedTrial
+            && incoming().trialDaysGranted == existing().trialDaysGranted
+            && incoming().accessExpiresAt == existing().accessExpiresAt
+            && incoming().adminNote == existing().adminNote
+            && incoming().approvedAt == existing().approvedAt
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'email', 'displayName', 'updatedAt'
+            ])
           )
         );
 
@@ -384,11 +434,14 @@ service cloud.firestore {
 
     // ==================== USER WORKSPACE ====================
     match /users/{userId} {
-      allow get: if isValidId(userId)
-        && isOwner(userId)
-        && (resource == null || existing().ownerId == request.auth.uid)
-        && hasActiveAccess(userId);
-      allow list: if false;
+      allow get: if isValidId(userId) && (
+        isBootstrapAdmin() || (
+          isOwner(userId)
+          && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
+        )
+      );
+      allow list: if isBootstrapAdmin();
 
       allow create: if isValidId(userId)
         && isOwner(userId)

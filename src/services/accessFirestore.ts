@@ -14,8 +14,10 @@ import { OperationType, db, handleFirestoreError } from '../firebase';
 import {
   AccessConfig,
   AccessStatus,
+  AdminPinConfig,
   BOOTSTRAP_ADMIN_EMAIL,
   DEFAULT_ACCESS_CONFIG,
+  LEGACY_PLACEHOLDER_EMAIL,
   UserAccount,
   isAccountAccessActive,
 } from '../types/access';
@@ -60,6 +62,203 @@ function timestampToMs(value: unknown): number | null {
   }
   return null;
 }
+
+// ==================== ADMIN PIN CRYPTO HELPERS (SHA-256 + SALT) ====================
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Pure JS SHA-256 fallback in case SubtleCrypto is unavailable on non-HTTPS local preview.
+ */
+function sha256FallbackHex(message: string): string {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+    0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+    0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+    0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+    0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  const H = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
+    0x1f83d9ab, 0x5be0cd19,
+  ];
+
+  const bitLen = data.length * 8;
+  const paddedLen = Math.ceil((data.length + 9) / 64) * 64;
+  const padded = new Uint8Array(paddedLen);
+  padded.set(data);
+  padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(paddedLen - 8, Math.floor(bitLen / 0x100000000), false);
+  view.setUint32(paddedLen - 4, bitLen >>> 0, false);
+
+  const W = new Uint32Array(64);
+  const rotr = (n: number, x: number) => (x >>> n) | (x << (32 - n));
+
+  for (let offset = 0; offset < paddedLen; offset += 64) {
+    for (let i = 0; i < 16; i++) {
+      W[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(7, W[i - 15]) ^ rotr(18, W[i - 15]) ^ (W[i - 15] >>> 3);
+      const s1 = rotr(17, W[i - 2]) ^ rotr(19, W[i - 2]) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+    }
+
+    let [a, b, c, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+      const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temp1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    H[0] = (H[0] + a) >>> 0;
+    H[1] = (H[1] + b) >>> 0;
+    H[2] = (H[2] + c) >>> 0;
+    H[3] = (H[3] + d) >>> 0;
+    H[4] = (H[4] + e) >>> 0;
+    H[5] = (H[5] + f) >>> 0;
+    H[6] = (H[6] + g) >>> 0;
+    H[7] = (H[7] + h) >>> 0;
+  }
+
+  return H.map((n) => n.toString(16).padStart(8, '0')).join('');
+}
+
+function generatePinSalt(): string {
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return bytesToHex(bytes);
+}
+
+export async function hashAdminPin(pin: string, salt: string): Promise<string> {
+  const input = `${salt}:omnicontent-admin-pin:${pin}`;
+  if (typeof crypto !== 'undefined' && crypto.subtle) {
+    const encoded = new TextEncoder().encode(input);
+    const digest = await crypto.subtle.digest('SHA-256', encoded);
+    return bytesToHex(new Uint8Array(digest));
+  }
+  return sha256FallbackHex(input);
+}
+
+export async function verifyAdminPin(
+  pin: string,
+  config: AdminPinConfig
+): Promise<boolean> {
+  if (!/^\d{4}$|^\d{6}$/.test(pin)) return false;
+  if (pin.length !== config.pinLength) return false;
+  const computed = await hashAdminPin(pin, config.pinSalt);
+  if (computed.length !== config.pinHash.length) return false;
+  let diff = 0;
+  for (let i = 0; i < computed.length; i++) {
+    diff |= computed.charCodeAt(i) ^ config.pinHash.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+export function subscribeToAdminPinConfig(
+  onData: (config: AdminPinConfig | null) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const path = 'adminSecurity/pin';
+  return onSnapshot(
+    doc(db, 'adminSecurity', 'pin'),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      const raw = snap.data() as Record<string, unknown>;
+      const pinLength = raw.pinLength === 6 ? 6 : 4;
+      const pinHash = typeof raw.pinHash === 'string' ? raw.pinHash : '';
+      const pinSalt = typeof raw.pinSalt === 'string' ? raw.pinSalt : '';
+      if (pinHash.length === 64 && pinSalt.length >= 16) {
+        onData({
+          pinHash,
+          pinSalt,
+          pinLength,
+          updatedAtMs: timestampToMs(raw.updatedAt),
+        });
+      } else {
+        onData(null);
+      }
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, path);
+      } catch (wrapped) {
+        if (onError && wrapped instanceof Error) onError(wrapped);
+      }
+    }
+  );
+}
+
+export async function saveAdminPin(pin: string): Promise<AdminPinConfig> {
+  if (!/^\d{4}$|^\d{6}$/.test(pin)) {
+    throw new Error('El PIN debe tener exactamente 4 o 6 dígitos numéricos.');
+  }
+  const path = 'adminSecurity/pin';
+  const ref = doc(db, 'adminSecurity', 'pin');
+  const pinSalt = generatePinSalt();
+  const pinHash = await hashAdminPin(pin, pinSalt);
+  const pinLength: 4 | 6 = pin.length === 6 ? 6 : 4;
+
+  const payload = {
+    pinHash,
+    pinSalt,
+    pinLength,
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    const existingSnap = await getDoc(ref);
+    if (existingSnap.exists()) {
+      await updateDoc(ref, payload);
+    } else {
+      await setDoc(ref, payload);
+    }
+    return {
+      pinHash,
+      pinSalt,
+      pinLength,
+      updatedAtMs: Date.now(),
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// ==================== ACCESS CONFIG & USER ACCOUNTS ====================
 
 function mapAccessConfig(raw: Record<string, unknown> | undefined): AccessConfig {
   if (!raw) return DEFAULT_ACCESS_CONFIG;
@@ -269,16 +468,44 @@ export async function ensureUserAccount(
 ): Promise<UserAccount> {
   const path = `accounts/${uid}`;
   const ref = doc(db, 'accounts', uid);
+  const safeEmail = sanitizeNonEmpty(email, 180, 'usuario@correo.com');
+  const safeName = sanitizeString(displayName, 120);
+
   try {
     const snap = await getDoc(ref);
     if (snap.exists()) {
-      return mapUserAccount(snap.id, snap.data() as Record<string, unknown>);
+      const mapped = mapUserAccount(
+        snap.id,
+        snap.data() as Record<string, unknown>
+      );
+      // If admin pre-registered this legacy workspace before the user returned, sync their real Google email
+      if (
+        mapped.email === LEGACY_PLACEHOLDER_EMAIL &&
+        safeEmail &&
+        safeEmail !== LEGACY_PLACEHOLDER_EMAIL
+      ) {
+        try {
+          await updateDoc(ref, {
+            email: safeEmail,
+            displayName: safeName || mapped.displayName,
+            updatedAt: serverTimestamp(),
+          });
+          return {
+            ...mapped,
+            email: safeEmail,
+            displayName: safeName || mapped.displayName,
+          };
+        } catch {
+          // Return existing mapped record if sync fails
+        }
+      }
+      return mapped;
     }
 
     await setDoc(ref, {
       uid,
-      email: sanitizeNonEmpty(email, 180, 'usuario@correo.com'),
-      displayName: sanitizeString(displayName, 120),
+      email: safeEmail,
+      displayName: safeName,
       businessName: '',
       accessStatus: 'unassigned',
       requestedPlan: 'none',
@@ -304,8 +531,8 @@ export async function ensureUserAccount(
 
     return {
       uid,
-      email,
-      displayName,
+      email: safeEmail,
+      displayName: safeName,
       businessName: '',
       accessStatus: 'unassigned',
       requestedPlan: 'none',
@@ -402,7 +629,6 @@ export async function submitSubscriptionRequest(
 
   try {
     if (isCurrentlyActive) {
-      // Early renewal: keep existing active access status untouched while notifying admin
       await updateDoc(doc(db, 'accounts', uid), {
         displayName: sanitizeString(data.displayName, 120).trim(),
         businessName: sanitizeString(data.businessName, 120).trim(),
@@ -429,41 +655,192 @@ export async function submitSubscriptionRequest(
   }
 }
 
+/**
+ * Subscribes to BOTH /accounts and legacy /users workspaces so the admin
+ * immediately sees all previously registered accounts as well as new Lobby accounts.
+ */
 export function subscribeToAllAccounts(
+  adminUid: string,
+  adminEmail: string,
   onData: (accounts: UserAccount[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  const path = 'accounts';
-  return onSnapshot(
+  let accountMap = new Map<string, UserAccount>();
+  let legacyWorkspaceMap = new Map<
+    string,
+    { displayName: string; createdAtMs: number | null; updatedAtMs: number | null }
+  >();
+
+  const emitMerged = () => {
+    const merged: UserAccount[] = [];
+    const seen = new Set<string>();
+
+    accountMap.forEach((acc, uid) => {
+      seen.add(uid);
+      const isAdminAcc =
+        uid === adminUid ||
+        acc.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+      merged.push({
+        ...acc,
+        isLegacyWorkspace: false,
+        isAdminAccount: isAdminAcc,
+      });
+    });
+
+    legacyWorkspaceMap.forEach((ws, uid) => {
+      if (seen.has(uid)) return;
+      const isAdminAcc = uid === adminUid;
+      merged.push({
+        uid,
+        email: isAdminAcc
+          ? adminEmail || BOOTSTRAP_ADMIN_EMAIL
+          : LEGACY_PLACEHOLDER_EMAIL,
+        displayName: ws.displayName || (isAdminAcc ? 'Administrador' : 'Usuario registrado'),
+        businessName: '',
+        accessStatus: 'unassigned',
+        requestedPlan: 'none',
+        hasUsedTrial: false,
+        trialDaysGranted: 0,
+        accessExpiresAtMs: null,
+        paymentReference: '',
+        userNote: '',
+        adminNote: '',
+        requestedAtMs: null,
+        approvedAtMs: null,
+        createdAtMs: ws.createdAtMs,
+        updatedAtMs: ws.updatedAtMs,
+        isLegacyWorkspace: !isAdminAcc,
+        isAdminAccount: isAdminAcc,
+      });
+    });
+
+    merged.sort((a, b) => {
+      // Admin account at bottom so client accounts come first
+      if (Boolean(a.isAdminAccount) !== Boolean(b.isAdminAccount)) {
+        return a.isAdminAccount ? 1 : -1;
+      }
+      const aPending =
+        a.accessStatus === 'pending_trial' ||
+        a.accessStatus === 'pending_subscription'
+          ? 0
+          : 1;
+      const bPending =
+        b.accessStatus === 'pending_trial' ||
+        b.accessStatus === 'pending_subscription'
+          ? 0
+          : 1;
+      if (aPending !== bPending) return aPending - bPending;
+      return (
+        (b.updatedAtMs || b.createdAtMs || 0) -
+        (a.updatedAtMs || a.createdAtMs || 0)
+      );
+    });
+
+    onData(merged);
+  };
+
+  const unsubAccounts = onSnapshot(
     collection(db, 'accounts'),
     (snap) => {
-      const list = snap.docs.map((d) =>
-        mapUserAccount(d.id, d.data() as Record<string, unknown>)
-      );
-      list.sort((a, b) => {
-        const aPending =
-          a.accessStatus === 'pending_trial' ||
-          a.accessStatus === 'pending_subscription'
-            ? 0
-            : 1;
-        const bPending =
-          b.accessStatus === 'pending_trial' ||
-          b.accessStatus === 'pending_subscription'
-            ? 0
-            : 1;
-        if (aPending !== bPending) return aPending - bPending;
-        return (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0);
+      const next = new Map<string, UserAccount>();
+      snap.docs.forEach((d) => {
+        next.set(d.id, mapUserAccount(d.id, d.data() as Record<string, unknown>));
       });
-      onData(list);
+      accountMap = next;
+      emitMerged();
     },
     (error) => {
       try {
-        handleFirestoreError(error, OperationType.LIST, path);
+        handleFirestoreError(error, OperationType.LIST, 'accounts');
       } catch (wrapped) {
         if (onError && wrapped instanceof Error) onError(wrapped);
       }
     }
   );
+
+  const unsubUsers = onSnapshot(
+    collection(db, 'users'),
+    (snap) => {
+      const next = new Map<
+        string,
+        { displayName: string; createdAtMs: number | null; updatedAtMs: number | null }
+      >();
+      snap.docs.forEach((d) => {
+        const raw = d.data() as Record<string, unknown>;
+        next.set(d.id, {
+          displayName: typeof raw.displayName === 'string' ? raw.displayName : '',
+          createdAtMs: timestampToMs(raw.createdAt),
+          updatedAtMs: timestampToMs(raw.updatedAt),
+        });
+      });
+      legacyWorkspaceMap = next;
+      emitMerged();
+    },
+    (error) => {
+      // Non-fatal if secondary listener fails; surface via console
+      console.error('Legacy users listener error:', error);
+    }
+  );
+
+  return () => {
+    unsubAccounts();
+    unsubUsers();
+  };
+}
+
+function buildAdminCreatePayload(
+  account: UserAccount,
+  overrides: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    uid: account.uid,
+    email: sanitizeNonEmpty(
+      overrides.email ?? account.email,
+      180,
+      LEGACY_PLACEHOLDER_EMAIL
+    ),
+    displayName: sanitizeString(account.displayName, 120),
+    businessName: sanitizeString(account.businessName, 120),
+    accessStatus: account.accessStatus,
+    requestedPlan: account.requestedPlan,
+    hasUsedTrial: Boolean(account.hasUsedTrial),
+    trialDaysGranted: clampNumber(account.trialDaysGranted, 0, 365, 0),
+    accessExpiresAt: account.accessExpiresAtMs
+      ? Timestamp.fromMillis(account.accessExpiresAtMs)
+      : null,
+    paymentReference: sanitizeString(account.paymentReference, 200),
+    userNote: sanitizeString(account.userNote, 400),
+    adminNote: sanitizeString(account.adminNote, 400),
+    requestedAt: account.requestedAtMs
+      ? Timestamp.fromMillis(account.requestedAtMs)
+      : null,
+    approvedAt: account.approvedAtMs
+      ? Timestamp.fromMillis(account.approvedAtMs)
+      : null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
+async function upsertAccountAsAdmin(
+  account: UserAccount,
+  patch: Record<string, unknown>
+): Promise<void> {
+  const path = `accounts/${account.uid}`;
+  const ref = doc(db, 'accounts', account.uid);
+  try {
+    if (account.isLegacyWorkspace) {
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, buildAdminCreatePayload(account, patch));
+        return;
+      }
+    }
+    await updateDoc(ref, patch);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
 }
 
 export async function adminApproveTrial(
@@ -472,28 +849,23 @@ export async function adminApproveTrial(
   customExpiresDate?: Date,
   adminNote?: string
 ): Promise<void> {
-  const path = `accounts/${account.uid}`;
   const safeDays = clampNumber(trialDays, 1, 365, 30);
   const expiresDate =
     customExpiresDate || new Date(Date.now() + safeDays * 86_400_000);
 
-  try {
-    await updateDoc(doc(db, 'accounts', account.uid), {
-      accessStatus: 'trial_active',
-      requestedPlan: 'none',
-      hasUsedTrial: true,
-      trialDaysGranted: safeDays,
-      accessExpiresAt: Timestamp.fromDate(expiresDate),
-      adminNote: sanitizeString(
-        adminNote !== undefined ? adminNote : account.adminNote,
-        400
-      ),
-      approvedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+  await upsertAccountAsAdmin(account, {
+    accessStatus: 'trial_active',
+    requestedPlan: 'none',
+    hasUsedTrial: true,
+    trialDaysGranted: safeDays,
+    accessExpiresAt: Timestamp.fromDate(expiresDate),
+    adminNote: sanitizeString(
+      adminNote !== undefined ? adminNote : account.adminNote,
+      400
+    ),
+    approvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function adminApproveSubscription(
@@ -502,7 +874,6 @@ export async function adminApproveSubscription(
   customExpiresDate?: Date,
   adminNote?: string
 ): Promise<void> {
-  const path = `accounts/${account.uid}`;
   const safeDays = clampNumber(cycleDays, 1, 365, 30);
   const baseMs =
     account.accessExpiresAtMs && account.accessExpiresAtMs > Date.now()
@@ -511,26 +882,23 @@ export async function adminApproveSubscription(
   const expiresDate =
     customExpiresDate || new Date(baseMs + safeDays * 86_400_000);
 
-  try {
-    await updateDoc(doc(db, 'accounts', account.uid), {
-      accessStatus: 'subscription_active',
-      requestedPlan: 'none',
-      accessExpiresAt: Timestamp.fromDate(expiresDate),
-      adminNote: sanitizeString(
-        adminNote !== undefined ? adminNote : account.adminNote,
-        400
-      ),
-      approvedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+  await upsertAccountAsAdmin(account, {
+    accessStatus: 'subscription_active',
+    requestedPlan: 'none',
+    accessExpiresAt: Timestamp.fromDate(expiresDate),
+    adminNote: sanitizeString(
+      adminNote !== undefined ? adminNote : account.adminNote,
+      400
+    ),
+    approvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 }
 
 export async function adminUpdateAccount(
   account: UserAccount,
   updates: {
+    email?: string;
     accessStatus: AccessStatus;
     accessExpiresAt: Date | null;
     hasUsedTrial: boolean;
@@ -538,31 +906,32 @@ export async function adminUpdateAccount(
     adminNote: string;
   }
 ): Promise<void> {
-  const path = `accounts/${account.uid}`;
   const isGrantingActive =
     updates.accessStatus === 'trial_active' ||
     updates.accessStatus === 'subscription_active';
 
-  try {
-    await updateDoc(doc(db, 'accounts', account.uid), {
-      accessStatus: updates.accessStatus,
-      requestedPlan: isGrantingActive ? 'none' : account.requestedPlan,
-      hasUsedTrial: Boolean(updates.hasUsedTrial),
-      trialDaysGranted: clampNumber(updates.trialDaysGranted, 0, 365, 0),
-      accessExpiresAt: updates.accessExpiresAt
-        ? Timestamp.fromDate(updates.accessExpiresAt)
+  const patch: Record<string, unknown> = {
+    accessStatus: updates.accessStatus,
+    requestedPlan: isGrantingActive ? 'none' : account.requestedPlan,
+    hasUsedTrial: Boolean(updates.hasUsedTrial),
+    trialDaysGranted: clampNumber(updates.trialDaysGranted, 0, 365, 0),
+    accessExpiresAt: updates.accessExpiresAt
+      ? Timestamp.fromDate(updates.accessExpiresAt)
+      : null,
+    adminNote: sanitizeString(updates.adminNote, 400).trim(),
+    approvedAt: isGrantingActive
+      ? serverTimestamp()
+      : account.approvedAtMs
+        ? Timestamp.fromMillis(account.approvedAtMs)
         : null,
-      adminNote: sanitizeString(updates.adminNote, 400).trim(),
-      approvedAt: isGrantingActive
-        ? serverTimestamp()
-        : account.approvedAtMs
-          ? Timestamp.fromMillis(account.approvedAtMs)
-          : null,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    updatedAt: serverTimestamp(),
+  };
+
+  if (typeof updates.email === 'string' && updates.email.trim().length >= 3) {
+    patch.email = sanitizeString(updates.email.trim(), 180);
   }
+
+  await upsertAccountAsAdmin(account, patch);
 }
 
 export async function adminDenyAccount(
@@ -570,18 +939,13 @@ export async function adminDenyAccount(
   status: 'rejected' | 'suspended',
   adminNote?: string
 ): Promise<void> {
-  const path = `accounts/${account.uid}`;
-  try {
-    await updateDoc(doc(db, 'accounts', account.uid), {
-      accessStatus: status,
-      requestedPlan: 'none',
-      adminNote: sanitizeString(
-        adminNote !== undefined ? adminNote : account.adminNote,
-        400
-      ),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+  await upsertAccountAsAdmin(account, {
+    accessStatus: status,
+    requestedPlan: 'none',
+    adminNote: sanitizeString(
+      adminNote !== undefined ? adminNote : account.adminNote,
+      400
+    ),
+    updatedAt: serverTimestamp(),
+  });
 }
