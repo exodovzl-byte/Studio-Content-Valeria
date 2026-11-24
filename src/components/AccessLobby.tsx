@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
+  ArrowRight,
   Calendar,
   Check,
   Clock,
@@ -11,6 +12,7 @@ import {
   LogOut,
   Moon,
   RefreshCw,
+  Shield,
   ShieldCheck,
   Sun,
 } from 'lucide-react';
@@ -35,9 +37,13 @@ interface AccessLobbyProps {
   darkMode: boolean;
   authBusy: boolean;
   authHint: string | null;
+  isAdmin: boolean;
+  pendingAdminCount: number;
   onToggleTheme: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
+  onAdminEntry: () => void;
+  onEnterStudioAsAdmin: () => void;
   onSubmitTrial: (data: {
     displayName: string;
     businessName: string;
@@ -59,9 +65,13 @@ export function AccessLobby({
   darkMode,
   authBusy,
   authHint,
+  isAdmin,
+  pendingAdminCount,
   onToggleTheme,
   onSignIn,
   onSignOut,
+  onAdminEntry,
+  onEnterStudioAsAdmin,
   onSubmitTrial,
   onSubmitSubscription,
   onRefreshStatus,
@@ -191,6 +201,22 @@ export function AccessLobby({
 
             <button
               type="button"
+              disabled={authBusy}
+              onClick={onAdminEntry}
+              title="Acceso exclusivo para administrador (requiere PIN)"
+              className="inline-flex items-center justify-center gap-1.5 min-w-[38px] min-h-[38px] px-2.5 sm:px-3 py-2 rounded-lg text-xs font-semibold border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+            >
+              <Shield className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Administrador</span>
+              {isAdmin && pendingAdminCount > 0 && (
+                <span className="font-mono tabular-nums text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  ({pendingAdminCount})
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={onToggleTheme}
               title={darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
               aria-label={
@@ -232,7 +258,74 @@ export function AccessLobby({
 
       {/* Main Lobby Content */}
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 pb-safe">
-        {!user ? (
+        {user && isAdmin ? (
+          /* ==================== ADMIN LOBBY LAUNCHER ==================== */
+          <div className="max-w-xl mx-auto space-y-5">
+            <div className="rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/85 p-6 sm:p-7 space-y-5">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600/12 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-lg font-bold text-slate-900 dark:text-white">
+                    Bienvenido al Lobby, Administrador
+                  </h1>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1 leading-relaxed">
+                    Sesión iniciada como{' '}
+                    <span className="font-semibold text-slate-800 dark:text-zinc-200">
+                      {user.email}
+                    </span>
+                    . Elige si deseas abrir el Panel de Administrador con tu PIN o entrar directamente al estudio.
+                  </p>
+                </div>
+              </div>
+
+              {authHint && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+                  {authHint}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                <button
+                  type="button"
+                  onClick={onAdminEntry}
+                  className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Panel de Administrador</span>
+                  {pendingAdminCount > 0 && (
+                    <span className="font-mono tabular-nums text-[11px] bg-white/20 px-1.5 py-0.5 rounded">
+                      {pendingAdminCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onEnterStudioAsAdmin}
+                  className="flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-zinc-700 bg-slate-900 text-white dark:bg-white dark:text-zinc-950 hover:opacity-90 transition-opacity"
+                >
+                  <span>Entrar al Estudio</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 dark:border-zinc-800 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-zinc-400">
+                <span>El acceso al panel solo está disponible desde este Lobby.</span>
+                <button
+                  type="button"
+                  disabled={authBusy}
+                  onClick={onSignOut}
+                  className="inline-flex items-center gap-1 font-medium text-rose-600 dark:text-rose-400 hover:underline shrink-0"
+                >
+                  <LogOut className="w-3 h-3" />
+                  Cambiar correo
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : !user ? (
           /* ==================== STATE 1: PUBLIC WELCOME & EMAIL ENTRY ==================== */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-start">
             {/* Left Column: Value Proposition & Google Email Registration */}
@@ -409,6 +502,12 @@ export function AccessLobby({
                 </div>
               </div>
 
+              {authHint && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+                  {authHint}
+                </div>
+              )}
+
               <div className="divide-y divide-slate-100 dark:divide-zinc-800 border-y border-slate-200 dark:border-zinc-800 text-xs">
                 <div className="py-2.5 flex items-center justify-between gap-3">
                   <span className="text-slate-500 dark:text-zinc-400">
@@ -523,6 +622,12 @@ export function AccessLobby({
           /* ==================== STATE 3: CHOOSE PLAN / EXPIRED / DENIED ==================== */
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Contextual Access Denied / Expired Banner */}
+            {authHint && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-200">
+                {authHint}
+              </div>
+            )}
+
             {(expired ||
               account?.accessStatus === 'rejected' ||
               account?.accessStatus === 'suspended') && (

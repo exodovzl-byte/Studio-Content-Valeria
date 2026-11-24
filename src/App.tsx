@@ -16,7 +16,6 @@ import {
   PanelRight,
   Plus,
   Search,
-  Shield,
   SlidersHorizontal,
   Sun,
   Trash2,
@@ -192,6 +191,9 @@ export default function App() {
   const [adminPinUnlocked, setAdminPinUnlocked] = useState<boolean>(false);
   const [adminPinModalOpen, setAdminPinModalOpen] = useState<boolean>(false);
   const [adminModeOpen, setAdminModeOpen] = useState<boolean>(false);
+  const [enteredStudioAsAdmin, setEnteredStudioAsAdmin] =
+    useState<boolean>(false);
+  const [pendingAdminIntent, setPendingAdminIntent] = useState<boolean>(false);
   const [renewalModalOpen, setRenewalModalOpen] = useState<boolean>(false);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
@@ -254,6 +256,7 @@ export default function App() {
         setAdminPinUnlocked(false);
         setAdminPinModalOpen(false);
         setAdminModeOpen(false);
+        setEnteredStudioAsAdmin(false);
         setAccessChecked(true);
         setCloudLoaded(false);
       }
@@ -272,6 +275,7 @@ export default function App() {
       setAdminPinLoaded(false);
       setAdminPinUnlocked(false);
       setAdminPinModalOpen(false);
+      setEnteredStudioAsAdmin(false);
       setAccessChecked(true);
       return;
     }
@@ -358,6 +362,23 @@ export default function App() {
       unsubAdminPin?.();
     };
   }, [authReady, user]);
+
+  // Automatically open Admin PIN modal if user clicked "Administrador" in the Lobby and just finished signing in
+  useEffect(() => {
+    if (!pendingAdminIntent || !authReady || !user || !accessChecked) return;
+    setPendingAdminIntent(false);
+    if (isAdmin) {
+      if (adminPinUnlocked) {
+        setAdminModeOpen(true);
+      } else {
+        setAdminPinModalOpen(true);
+      }
+    } else {
+      setAuthHint(
+        'Esta cuenta no tiene permisos de administrador. Inicia sesión con el correo administrador autorizado.'
+      );
+    }
+  }, [pendingAdminIntent, authReady, user, accessChecked, isAdmin, adminPinUnlocked]);
 
   const hasActiveStudioAccess = useMemo(() => {
     if (!user || !accessChecked) return false;
@@ -614,18 +635,44 @@ export default function App() {
     }
   };
 
-  const handleRequestOpenAdmin = () => {
-    if (!isAdmin) return;
-    if (adminPinUnlocked) {
-      setAdminModeOpen(true);
-    } else {
-      setAdminPinModalOpen(true);
+  const handleLobbyAdminEntry = async () => {
+    setAuthHint(null);
+    if (user && isAdmin) {
+      if (adminPinUnlocked) {
+        setAdminModeOpen(true);
+      } else {
+        setAdminPinModalOpen(true);
+      }
+      return;
+    }
+    // Not signed in yet, or signed in with a non-admin account: prompt Google account chooser then open PIN
+    setPendingAdminIntent(true);
+    setAuthBusy(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      setPendingAdminIntent(false);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('unauthorized-domain')) {
+        setAuthHint(
+          `El dominio "${window.location.hostname}" debe agregarse en los dominios autorizados de tu consola de autenticación para iniciar sesión.`
+        );
+      } else if (msg.includes('popup-blocked')) {
+        setAuthHint(
+          'Tu navegador bloqueó la ventana emergente de Google. Permite ventanas emergentes e intenta de nuevo.'
+        );
+      } else if (!msg.includes('popup-closed-by-user')) {
+        console.error('Admin sign-in error:', err);
+      }
+    } finally {
+      setAuthBusy(false);
     }
   };
 
   const handleLockAdmin = () => {
     setAdminPinUnlocked(false);
     setAdminModeOpen(false);
+    setEnteredStudioAsAdmin(false);
   };
 
   const handleReauthenticateForPinReset = async (): Promise<boolean> => {
@@ -684,6 +731,8 @@ export default function App() {
       setAdminModeOpen(false);
       setAdminPinUnlocked(false);
       setAdminPinModalOpen(false);
+      setEnteredStudioAsAdmin(false);
+      setPendingAdminIntent(false);
       setSelectedPostId(null);
       setRenewalModalOpen(false);
       postsRef.current = INITIAL_POSTS;
@@ -1114,7 +1163,11 @@ export default function App() {
   if (
     !authReady ||
     (user && !accessChecked) ||
-    (user && hasActiveStudioAccess && !cloudLoaded)
+    (user &&
+      hasActiveStudioAccess &&
+      (!isAdmin || enteredStudioAsAdmin) &&
+      !adminModeOpen &&
+      !cloudLoaded)
   ) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-6">
@@ -1135,64 +1188,7 @@ export default function App() {
     );
   }
 
-  // Public Lobby & Access Gate (Not signed in, pending approval, expired, or suspended)
-  if (!user || !hasActiveStudioAccess) {
-    return (
-      <AccessLobby
-        user={
-          user
-            ? {
-                uid: user.uid,
-                displayName: user.displayName,
-                email: user.email,
-                photoURL: user.photoURL,
-              }
-            : null
-        }
-        account={userAccount}
-        config={accessConfig}
-        darkMode={darkMode}
-        authBusy={authBusy}
-        authHint={authHint}
-        onToggleTheme={() => setDarkMode((d) => !d)}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-        onSubmitTrial={async (data) => {
-          if (!user) return;
-          await submitTrialRequest(user.uid, data);
-        }}
-        onSubmitSubscription={async (data) => {
-          if (!user) return;
-          await submitSubscriptionRequest(user.uid, userAccount, data);
-        }}
-        onRefreshStatus={async () => {
-          if (!user) return;
-          const fresh = await refreshUserAccountFromServer(user.uid);
-          setUserAccount(fresh);
-          setNowTick(Date.now());
-        }}
-      />
-    );
-  }
-
-  const userDaysLeft =
-    !isAdmin && userAccount
-      ? getDaysRemaining(userAccount.accessExpiresAtMs, nowTick)
-      : null;
-
-  const userPlanSummary =
-    !isAdmin && userAccount
-      ? `${
-          userAccount.accessStatus === 'trial_active' ? 'Prueba' : 'Suscripción'
-        } · ${userDaysLeft}d (vence ${formatDateShort(userAccount.accessExpiresAtMs)})`
-      : null;
-
-  const showExpiringSoonBanner =
-    !isAdmin &&
-    userAccount !== null &&
-    userDaysLeft !== null &&
-    userDaysLeft <= 5;
-
+  // Unlocked Admin Panel (opened exclusively via Lobby + 4/6-digit PIN)
   if (isAdmin && adminModeOpen && adminPinUnlocked) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -1230,9 +1226,12 @@ export default function App() {
           <AdminDashboard
             accounts={allAccounts}
             config={accessConfig}
-            adminEmail={user.email || ''}
+            adminEmail={user?.email || ''}
             pinConfig={adminPinConfig}
-            onBackToStudio={() => setAdminModeOpen(false)}
+            onBackToStudio={() => {
+              setAdminModeOpen(false);
+              setEnteredStudioAsAdmin(true);
+            }}
             onLockAdmin={handleLockAdmin}
             onSignOut={handleSignOut}
             onSaveConfig={saveAccessConfig}
@@ -1254,6 +1253,94 @@ export default function App() {
       </div>
     );
   }
+
+  // Public Lobby & Access Gate (also houses the ONLY Administrator entry + PIN modal)
+  if (!user || !hasActiveStudioAccess || (isAdmin && !enteredStudioAsAdmin)) {
+    return (
+      <>
+        <AccessLobby
+          user={
+            user
+              ? {
+                  uid: user.uid,
+                  displayName: user.displayName,
+                  email: user.email,
+                  photoURL: user.photoURL,
+                }
+              : null
+          }
+          account={userAccount}
+          config={accessConfig}
+          darkMode={darkMode}
+          authBusy={authBusy}
+          authHint={authHint}
+          isAdmin={isAdmin}
+          pendingAdminCount={pendingAdminCount}
+          onToggleTheme={() => setDarkMode((d) => !d)}
+          onSignIn={handleSignIn}
+          onSignOut={handleSignOut}
+          onAdminEntry={handleLobbyAdminEntry}
+          onEnterStudioAsAdmin={() => setEnteredStudioAsAdmin(true)}
+          onSubmitTrial={async (data) => {
+            if (!user) return;
+            await submitTrialRequest(user.uid, data);
+          }}
+          onSubmitSubscription={async (data) => {
+            if (!user) return;
+            await submitSubscriptionRequest(user.uid, userAccount, data);
+          }}
+          onRefreshStatus={async () => {
+            if (!user) return;
+            const fresh = await refreshUserAccountFromServer(user.uid);
+            setUserAccount(fresh);
+            setNowTick(Date.now());
+          }}
+        />
+
+        {user && isAdmin && (
+          <AdminPinModal
+            open={adminPinModalOpen}
+            pinConfig={adminPinConfig}
+            pinConfigLoaded={adminPinLoaded}
+            adminEmail={user.email || ''}
+            onClose={() => setAdminPinModalOpen(false)}
+            onVerifyPin={async (pin) => {
+              if (!adminPinConfig) return false;
+              return verifyAdminPin(pin, adminPinConfig);
+            }}
+            onSaveNewPin={async (newPin) => {
+              const saved = await saveAdminPin(newPin);
+              setAdminPinConfig(saved);
+            }}
+            onReauthenticateForReset={handleReauthenticateForPinReset}
+            onUnlocked={() => {
+              setAdminPinUnlocked(true);
+              setAdminPinModalOpen(false);
+              setAdminModeOpen(true);
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
+  const userDaysLeft =
+    !isAdmin && userAccount
+      ? getDaysRemaining(userAccount.accessExpiresAtMs, nowTick)
+      : null;
+
+  const userPlanSummary =
+    !isAdmin && userAccount
+      ? `${
+          userAccount.accessStatus === 'trial_active' ? 'Prueba' : 'Suscripción'
+        } · ${userDaysLeft}d (vence ${formatDateShort(userAccount.accessExpiresAtMs)})`
+      : null;
+
+  const showExpiringSoonBanner =
+    !isAdmin &&
+    userAccount !== null &&
+    userDaysLeft !== null &&
+    userDaysLeft <= 5;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
@@ -1300,9 +1387,6 @@ export default function App() {
               authBusy={authBusy}
               onSignIn={handleSignIn}
               onSignOut={handleSignOut}
-              isAdmin={isAdmin}
-              pendingAdminCount={pendingAdminCount}
-              onOpenAdmin={handleRequestOpenAdmin}
               planSummary={userPlanSummary}
               onOpenRenewal={() => setRenewalModalOpen(true)}
             />
@@ -1363,26 +1447,8 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: Desktop Primary Action, Admin Access, Sign Out & Mobile Utilities */}
+          {/* Zone 3: Desktop Primary Action, Sign Out & Mobile Utilities */}
           <div className="flex items-center gap-1.5 shrink-0">
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={handleRequestOpenAdmin}
-                title="Abrir Panel de Administrador (requiere PIN)"
-                aria-label="Abrir Panel de Administrador"
-                className="inline-flex items-center justify-center gap-1.5 min-w-[38px] min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15 transition-colors whitespace-nowrap shrink-0"
-              >
-                <Shield className="w-4 h-4 shrink-0" />
-                <span className="hidden sm:inline">Admin</span>
-                {pendingAdminCount > 0 && (
-                  <span className="font-mono tabular-nums text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                    ({pendingAdminCount})
-                  </span>
-                )}
-              </button>
-            )}
-
             <button
               type="button"
               onClick={() => setBrandManagerOpen(true)}
@@ -1762,31 +1828,6 @@ export default function App() {
           await submitSubscriptionRequest(user.uid, userAccount, data);
         }}
       />
-
-      {/* Admin 4/6-Digit PIN Gate Modal */}
-      {isAdmin && (
-        <AdminPinModal
-          open={adminPinModalOpen}
-          pinConfig={adminPinConfig}
-          pinConfigLoaded={adminPinLoaded}
-          adminEmail={user.email || ''}
-          onClose={() => setAdminPinModalOpen(false)}
-          onVerifyPin={async (pin) => {
-            if (!adminPinConfig) return false;
-            return verifyAdminPin(pin, adminPinConfig);
-          }}
-          onSaveNewPin={async (newPin) => {
-            const saved = await saveAdminPin(newPin);
-            setAdminPinConfig(saved);
-          }}
-          onReauthenticateForReset={handleReauthenticateForPinReset}
-          onUnlocked={() => {
-            setAdminPinUnlocked(true);
-            setAdminPinModalOpen(false);
-            setAdminModeOpen(true);
-          }}
-        />
-      )}
 
       {/* PWA Auto-Update & Offline Status */}
       <PWAStatusBanner />
