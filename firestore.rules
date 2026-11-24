@@ -15,6 +15,15 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function isBootstrapAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'exodovzl@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
     function isOwner(userId) {
       return isVerifiedUser() && request.auth.uid == userId;
     }
@@ -39,7 +48,93 @@ service cloud.firestore {
       return existsAfter(/databases/$(database)/documents/users/$(userId)/brands/$(brandId));
     }
 
+    function hasActiveAccess(userId) {
+      return isAdmin() || (
+        exists(/databases/$(database)/documents/accounts/$(userId))
+        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessStatus in ['trial_active', 'subscription_active']
+        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt is timestamp
+        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt > request.time
+      );
+    }
+
     // ==================== VALIDATION BLUEPRINTS ====================
+    function isValidAccessConfig(data) {
+      return data.keys().hasAll([
+          'lobbyTitle', 'lobbySubtitle', 'trialEnabled', 'trialDays',
+          'trialTitle', 'trialDescription', 'subscriptionTitle',
+          'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
+          'subscriptionFeatures', 'paymentInstructions', 'supportContact',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'lobbyTitle', 'lobbySubtitle', 'trialEnabled', 'trialDays',
+          'trialTitle', 'trialDescription', 'subscriptionTitle',
+          'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
+          'subscriptionFeatures', 'paymentInstructions', 'supportContact',
+          'updatedAt'
+        ])
+        && data.lobbyTitle is string && data.lobbyTitle.size() >= 1 && data.lobbyTitle.size() <= 100
+        && data.lobbySubtitle is string && data.lobbySubtitle.size() <= 300
+        && data.trialEnabled is bool
+        && data.trialDays is number && data.trialDays >= 1 && data.trialDays <= 365
+        && data.trialTitle is string && data.trialTitle.size() >= 1 && data.trialTitle.size() <= 80
+        && data.trialDescription is string && data.trialDescription.size() <= 300
+        && data.subscriptionTitle is string && data.subscriptionTitle.size() >= 1 && data.subscriptionTitle.size() <= 80
+        && data.subscriptionPrice is string && data.subscriptionPrice.size() >= 1 && data.subscriptionPrice.size() <= 40
+        && data.subscriptionCycleDays is number && data.subscriptionCycleDays >= 1 && data.subscriptionCycleDays <= 365
+        && data.subscriptionDescription is string && data.subscriptionDescription.size() <= 300
+        && data.subscriptionFeatures is list
+        && data.subscriptionFeatures.size() <= 10
+        && (data.subscriptionFeatures.size() == 0 || (data.subscriptionFeatures[0] is string && data.subscriptionFeatures[0].size() <= 120))
+        && data.paymentInstructions is string && data.paymentInstructions.size() <= 1000
+        && data.supportContact is string && data.supportContact.size() <= 160
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAccount(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'businessName', 'accessStatus',
+          'requestedPlan', 'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
+          'paymentReference', 'userNote', 'adminNote', 'requestedAt',
+          'approvedAt', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'businessName', 'accessStatus',
+          'requestedPlan', 'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
+          'paymentReference', 'userNote', 'adminNote', 'requestedAt',
+          'approvedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 180
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.businessName is string && data.businessName.size() <= 120
+        && data.accessStatus in [
+          'unassigned', 'pending_trial', 'pending_subscription',
+          'trial_active', 'subscription_active', 'rejected', 'suspended'
+        ]
+        && data.requestedPlan in ['none', 'trial', 'subscription']
+        && data.hasUsedTrial is bool
+        && data.trialDaysGranted is number && data.trialDaysGranted >= 0 && data.trialDaysGranted <= 365
+        && (data.accessExpiresAt == null || data.accessExpiresAt is timestamp)
+        && data.paymentReference is string && data.paymentReference.size() <= 200
+        && data.userNote is string && data.userNote.size() <= 400
+        && data.adminNote is string && data.adminNote.size() <= 400
+        && (data.requestedAt == null || data.requestedAt is timestamp)
+        && (data.approvedAt == null || data.approvedAt is timestamp)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data, adminId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && data.uid == adminId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 180
+        && data.createdAt is timestamp;
+    }
+
     function isValidWorkspace(data, userId) {
       return data.keys().hasAll(['ownerId', 'displayName', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['ownerId', 'displayName', 'createdAt', 'updatedAt'])
@@ -145,18 +240,162 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    // ==================== APP CONFIG (LOBBY & SUBSCRIPTION SETTINGS) ====================
+    match /appConfig/{configId} {
+      allow get: if isValidId(configId) && configId == 'access';
+      allow list: if false;
+
+      allow create: if isValidId(configId)
+        && configId == 'access'
+        && isValidAccessConfig(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isValidId(configId)
+        && configId == 'access'
+        && isValidAccessConfig(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'lobbyTitle', 'lobbySubtitle', 'trialEnabled', 'trialDays',
+          'trialTitle', 'trialDescription', 'subscriptionTitle',
+          'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
+          'subscriptionFeatures', 'paymentInstructions', 'supportContact',
+          'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // ==================== ADMINS REGISTRY ====================
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isBootstrapAdmin());
+      allow list: if isBootstrapAdmin();
+
+      allow create: if isValidId(adminId)
+        && isValidAdminRecord(incoming(), adminId)
+        && incoming().createdAt == request.time
+        && isBootstrapAdmin();
+
+      allow update: if false;
+      allow delete: if isValidId(adminId) && isBootstrapAdmin();
+    }
+
+    // ==================== USER ACCOUNTS (ACCESS & SUBSCRIPTIONS) ====================
+    match /accounts/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrapAdmin();
+
+      allow create: if isValidId(userId)
+        && isValidAccount(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() || (
+            isOwner(userId)
+            && incoming().uid == request.auth.uid
+            && incoming().email == request.auth.token.email
+            && incoming().accessStatus in ['unassigned', 'pending_trial', 'pending_subscription']
+            && incoming().hasUsedTrial == false
+            && incoming().trialDaysGranted == 0
+            && incoming().accessExpiresAt == null
+            && incoming().adminNote == ''
+            && incoming().approvedAt == null
+            && (
+              (incoming().accessStatus == 'unassigned' && incoming().requestedPlan == 'none' && incoming().requestedAt == null) ||
+              (incoming().accessStatus == 'pending_trial' && incoming().requestedPlan == 'trial' && incoming().requestedAt == request.time) ||
+              (incoming().accessStatus == 'pending_subscription' && incoming().requestedPlan == 'subscription' && incoming().requestedAt == request.time)
+            )
+          )
+        );
+
+      allow update: if isValidId(userId)
+        && isValidAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin monitoring, approvals, custom dates, suspensions & notes
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'businessName', 'accessStatus', 'requestedPlan',
+              'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
+              'paymentReference', 'userNote', 'adminNote', 'requestedAt',
+              'approvedAt', 'updatedAt'
+            ])
+          ) ||
+          // Tier 2A: Owner submitting a trial request (only if never used trial and not suspended)
+          (
+            isOwner(userId)
+            && existing().hasUsedTrial == false
+            && existing().accessStatus != 'suspended'
+            && incoming().hasUsedTrial == existing().hasUsedTrial
+            && incoming().trialDaysGranted == existing().trialDaysGranted
+            && incoming().accessExpiresAt == existing().accessExpiresAt
+            && incoming().adminNote == existing().adminNote
+            && incoming().approvedAt == existing().approvedAt
+            && incoming().accessStatus == 'pending_trial'
+            && incoming().requestedPlan == 'trial'
+            && incoming().requestedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'businessName', 'accessStatus', 'requestedPlan',
+              'userNote', 'requestedAt', 'updatedAt'
+            ])
+          ) ||
+          // Tier 2B: Owner submitting a monthly subscription or renewal payment request
+          (
+            isOwner(userId)
+            && incoming().hasUsedTrial == existing().hasUsedTrial
+            && incoming().trialDaysGranted == existing().trialDaysGranted
+            && incoming().accessExpiresAt == existing().accessExpiresAt
+            && incoming().adminNote == existing().adminNote
+            && incoming().approvedAt == existing().approvedAt
+            && incoming().accessStatus == 'pending_subscription'
+            && incoming().requestedPlan == 'subscription'
+            && incoming().requestedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'businessName', 'accessStatus', 'requestedPlan',
+              'paymentReference', 'userNote', 'requestedAt', 'updatedAt'
+            ])
+          ) ||
+          // Tier 2C: Active user submitting early monthly renewal without losing current active access
+          (
+            isOwner(userId)
+            && existing().accessStatus in ['trial_active', 'subscription_active']
+            && incoming().accessStatus == existing().accessStatus
+            && incoming().hasUsedTrial == existing().hasUsedTrial
+            && incoming().trialDaysGranted == existing().trialDaysGranted
+            && incoming().accessExpiresAt == existing().accessExpiresAt
+            && incoming().adminNote == existing().adminNote
+            && incoming().approvedAt == existing().approvedAt
+            && incoming().requestedPlan == 'subscription'
+            && incoming().requestedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'businessName', 'requestedPlan',
+              'paymentReference', 'userNote', 'requestedAt', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
     // ==================== USER WORKSPACE ====================
     match /users/{userId} {
       allow get: if isValidId(userId)
         && isOwner(userId)
-        && (resource == null || existing().ownerId == request.auth.uid);
+        && (resource == null || existing().ownerId == request.auth.uid)
+        && hasActiveAccess(userId);
       allow list: if false;
 
       allow create: if isValidId(userId)
         && isOwner(userId)
         && isValidWorkspace(incoming(), userId)
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && hasActiveAccess(userId);
 
       allow update: if isValidId(userId)
         && isOwner(userId)
@@ -164,11 +403,13 @@ service cloud.firestore {
         && incoming().ownerId == existing().ownerId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
+        && hasActiveAccess(userId)
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']);
 
       allow delete: if isValidId(userId)
         && isOwner(userId)
-        && (resource == null || existing().ownerId == request.auth.uid);
+        && (resource == null || existing().ownerId == request.auth.uid)
+        && hasActiveAccess(userId);
 
       // ==================== BRANDS SUBCOLLECTION ====================
       match /brands/{brandId} {
@@ -176,6 +417,7 @@ service cloud.firestore {
           && isValidId(brandId)
           && isOwner(userId)
           && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
           && workspaceExists(userId);
 
         allow list: if isValidId(userId)
@@ -188,6 +430,7 @@ service cloud.firestore {
           && isValidBrand(incoming(), userId, brandId)
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time
+          && hasActiveAccess(userId)
           && workspaceExists(userId);
 
         allow update: if isValidId(userId)
@@ -198,6 +441,7 @@ service cloud.firestore {
           && incoming().ownerId == existing().ownerId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
+          && hasActiveAccess(userId)
           && workspaceExists(userId)
           && (
             // Action: Update identity & profile bio
@@ -228,6 +472,7 @@ service cloud.firestore {
           && isValidId(brandId)
           && isOwner(userId)
           && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
           && workspaceExists(userId);
       }
 
@@ -237,6 +482,7 @@ service cloud.firestore {
           && isValidId(postId)
           && isOwner(userId)
           && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
           && workspaceExists(userId);
 
         allow list: if isValidId(userId)
@@ -249,6 +495,7 @@ service cloud.firestore {
           && isValidPost(incoming(), userId, postId)
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time
+          && hasActiveAccess(userId)
           && workspaceExists(userId)
           && brandExistsAfter(userId, incoming().brandId);
 
@@ -260,6 +507,7 @@ service cloud.firestore {
           && incoming().ownerId == existing().ownerId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
+          && hasActiveAccess(userId)
           && workspaceExists(userId)
           && (
             // Action: Move Kanban stage
@@ -279,6 +527,7 @@ service cloud.firestore {
           && isValidId(postId)
           && isOwner(userId)
           && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
           && workspaceExists(userId);
       }
     }

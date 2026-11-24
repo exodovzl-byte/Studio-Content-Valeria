@@ -1,5 +1,248 @@
 {
   "entities": {
+    "AccessConfig": {
+      "title": "AccessConfig",
+      "description": "Admin-editable lobby, trial duration, and monthly subscription settings.",
+      "type": "object",
+      "properties": {
+        "lobbyTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Main headline displayed on the public lobby screen."
+        },
+        "lobbySubtitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Subtitle describing the platform value in the lobby."
+        },
+        "trialEnabled": {
+          "type": "boolean",
+          "description": "Whether new users can request a free trial."
+        },
+        "trialDays": {
+          "type": "number",
+          "description": "Default number of days granted when admin approves a trial (1-365)."
+        },
+        "trialTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Title of the trial plan card."
+        },
+        "trialDescription": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Description of what is included in the trial mode."
+        },
+        "subscriptionTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Title of the monthly subscription card."
+        },
+        "subscriptionPrice": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Displayed monthly price label (e.g. '$15 / mes')."
+        },
+        "subscriptionCycleDays": {
+          "type": "number",
+          "description": "Number of days granted per approved monthly subscription cycle (1-365)."
+        },
+        "subscriptionDescription": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Summary of the monthly subscription plan."
+        },
+        "subscriptionFeatures": {
+          "type": "array",
+          "description": "Bounded list (max 10) of monthly subscription benefits."
+        },
+        "paymentInstructions": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Instructions for completing monthly payment before admin approval."
+        },
+        "supportContact": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160,
+          "description": "Contact email, WhatsApp, or URL for user assistance."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last admin update."
+        }
+      },
+      "required": [
+        "lobbyTitle",
+        "lobbySubtitle",
+        "trialEnabled",
+        "trialDays",
+        "trialTitle",
+        "trialDescription",
+        "subscriptionTitle",
+        "subscriptionPrice",
+        "subscriptionCycleDays",
+        "subscriptionDescription",
+        "subscriptionFeatures",
+        "paymentInstructions",
+        "supportContact",
+        "updatedAt"
+      ]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Access control, trial approval, and monthly subscription monitoring record per user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the registered account."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 180,
+          "description": "Verified email address of the registered user (PII, restricted to owner and admin)."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Display name provided by the user."
+        },
+        "businessName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Brand or agency name submitted for admin verification."
+        },
+        "accessStatus": {
+          "type": "string",
+          "enum": [
+            "unassigned",
+            "pending_trial",
+            "pending_subscription",
+            "trial_active",
+            "subscription_active",
+            "rejected",
+            "suspended"
+          ],
+          "description": "Current access and approval status controlled by the admin."
+        },
+        "requestedPlan": {
+          "type": "string",
+          "enum": ["none", "trial", "subscription"],
+          "description": "Plan requested by the user."
+        },
+        "hasUsedTrial": {
+          "type": "boolean",
+          "description": "True once the admin has granted a trial, preventing repeated trial requests."
+        },
+        "trialDaysGranted": {
+          "type": "number",
+          "description": "Number of trial days last granted by the admin (0-365)."
+        },
+        "accessExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Nullable timestamp when current trial or monthly subscription expires."
+        },
+        "paymentReference": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200,
+          "description": "Payment reference or confirmation note submitted by the user."
+        },
+        "userNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400,
+          "description": "Optional note sent by the user to the administrator."
+        },
+        "adminNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 400,
+          "description": "Internal admin notes for monitoring this account."
+        },
+        "requestedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Nullable timestamp when the user submitted their latest access request."
+        },
+        "approvedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Nullable timestamp when the admin last approved access."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the account first registered."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last account update."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "businessName",
+        "accessStatus",
+        "requestedPlan",
+        "hasUsedTrial",
+        "trialDaysGranted",
+        "accessExpiresAt",
+        "paymentReference",
+        "userNote",
+        "adminNote",
+        "requestedAt",
+        "approvedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin role assignment document.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the administrator."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 180,
+          "description": "Verified email address of the administrator."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
     "UserWorkspace": {
       "title": "UserWorkspace",
       "description": "Root workspace document owned by an authenticated user.",
@@ -355,11 +598,29 @@
     }
   },
   "firestore": {
+    "/appConfig/{configId}": {
+      "schema": {
+        "$ref": "#/entities/AccessConfig"
+      },
+      "description": "Admin-managed lobby copy, trial duration, and monthly subscription pricing/instructions."
+    },
+    "/accounts/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserAccount"
+      },
+      "description": "User access registration, trial approval, and monthly subscription monitoring records (PII restricted to owner and admin)."
+    },
+    "/admins/{adminId}": {
+      "schema": {
+        "$ref": "#/entities/AdminRecord"
+      },
+      "description": "Trusted administrator directory managed by the bootstrap admin."
+    },
     "/users/{userId}": {
       "schema": {
         "$ref": "#/entities/UserWorkspace"
       },
-      "description": "Root workspace document per authenticated user (no PII)."
+      "description": "Root workspace document per approved user (no PII)."
     },
     "/users/{userId}/brands/{brandId}": {
       "schema": {

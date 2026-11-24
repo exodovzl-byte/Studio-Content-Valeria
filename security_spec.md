@@ -1,24 +1,26 @@
-# Security Specification — OmniContent Studio (`studio-content-83854`)
+# Security Specification — OmniContent Studio (Access Control & Admin RBAC)
 
-## 1. Data Invariants & Relationship Mapping
-- **Master Source of Truth**: `/users/{userId}` is the root workspace owned exclusively by the authenticated, email-verified user where `userId == request.auth.uid`.
-- **Relational Subcollections**:
-  - `/users/{userId}/brands/{brandId}`: Dynamic social brand profiles (create, rename, update, delete) belong strictly to `/users/{userId}`. Cannot be created unless the parent `/users/{userId}` workspace exists.
-  - `/users/{userId}/posts/{postId}`: Editorial content pieces belong strictly to `/users/{userId}` and must reference a valid existing brand (`existsAfter(/users/{userId}/brands/{brandId})`) under the same workspace.
-- **Zero PII Exposure**: No email, phone number, or private PII is stored inside readable shared collections; every collection is strictly owner-isolated (`userId == request.auth.uid` and `resource.data.ownerId == request.auth.uid`).
-- **Temporal & Ownership Immutability**: `ownerId` and `createdAt` are immutable after creation; `createdAt == request.time` on create and `updatedAt == request.time` on create/update.
-- **Strict Volumetric Bounds**: Every string and array has explicit upper bounds to prevent Denial-of-Wallet and document bloat.
+## 1. Data Invariants
 
-## 2. The "Dirty Dozen" Adversarial Payloads
-1. **Unauthenticated Read/Write**: Attempting to read `/users/u1/posts/p1` with `auth == null` -> `PERMISSION_DENIED`.
-2. **Unverified Email Write**: Attempting to create a post with `auth.token.email_verified == false` -> `PERMISSION_DENIED`.
-3. **Cross-Tenant Read (`get`)**: User `u2` reading `/users/u1/posts/p1` -> `PERMISSION_DENIED`.
-4. **Cross-Tenant List (`list`)**: User `u2` listing `/users/u1/posts` -> `PERMISSION_DENIED`.
-5. **Identity Spoofing on Create**: User `u1` creating `/users/u1/posts/p1` with `ownerId: "u2"` -> `PERMISSION_DENIED`.
-6. **Shadow Field Injection on Create**: Creating a brand with an unlisted ghost field `isAdmin: true` -> `PERMISSION_DENIED`.
-7. **Shadow Field Injection on Update**: Updating a post with an unlisted ghost field `role: "admin"` -> `PERMISSION_DENIED`.
-8. **Immutable Field Tampering**: Updating `ownerId` or `createdAt` on an existing post -> `PERMISSION_DENIED`.
-9. **Client Timestamp Forgery**: Creating/updating a post with a backdated `createdAt` or `updatedAt != request.time` -> `PERMISSION_DENIED`.
-10. **ID Poisoning Attack**: Writing to a document ID containing invalid characters or length > 128 -> `PERMISSION_DENIED`.
-11. **Array Exhaustion Attack**: Writing a post with `checklist.size() > 30` or `highlights.size() > 12` -> `PERMISSION_DENIED`.
-12. **Orphaned Subcollection Write**: Creating `/users/u1/posts/p1` before parent `/users/u1` workspace document exists -> `PERMISSION_DENIED`.
+1. **Zero Self-Approval**: A regular user can only create or update their own `/accounts/{userId}` document into `unassigned`, `pending_trial`, or `pending_subscription`. Only an administrator (`isAdmin()`) may set `accessStatus` to `trial_active`, `subscription_active`, `rejected`, or `suspended`, or modify `accessExpiresAt`, `hasUsedTrial`, `trialDaysGranted`, `approvedAt`, or `adminNote`.
+2. **One-Time Trial Guard**: Once `hasUsedTrial == true`, a user cannot submit `accessStatus: 'pending_trial'` again; they may only request `pending_subscription`.
+3. **Server-Enforced Expiration Gate**: Workspace reads (`get`) and writes (`create`, `update`, `delete`) on `/users/{userId}`, `/users/{userId}/brands/{brandId}`, and `/users/{userId}/posts/{postId}` require `hasActiveAccess(userId)`, which checks either `isAdmin()` or that `/accounts/{userId}` has `accessStatus in ['trial_active', 'subscription_active']` AND `accessExpiresAt > request.time`.
+4. **Strict PII Isolation**: `/accounts/{userId}` contains `email`; `get` is strictly restricted to `isOwner(userId) || isAdmin()`, and `list` is strictly restricted to the verified bootstrap administrator.
+5. **Admin-Only Configuration**: `/appConfig/access` is readable by verified users (for live lobby display) and writable exclusively by `isAdmin()`.
+6. **Verified Identity & Immutability**: All authenticated operations require `request.auth.token.email_verified == true`. `uid`, `email`, `ownerId`, and `createdAt` are immutable after creation; `createdAt` and `updatedAt` must equal `request.time`.
+7. **Referential Integrity**: Posts must reference an existing brand via `existsAfter` and an existing parent workspace via `exists`.
+
+## 2. The "Dirty Dozen" Adversarial Payloads (Must All Return PERMISSION_DENIED)
+
+1. **Self-Approved Trial on Create**: User creates `/accounts/{uid}` with `accessStatus: "trial_active"` and future `accessExpiresAt`.
+2. **Self-Approved Subscription on Update**: User updates `/accounts/{uid}` setting `accessStatus: "subscription_active"`.
+3. **Expiration Date Tampering**: Trial user updates `/accounts/{uid}` extending their own `accessExpiresAt`.
+4. **Repeat Trial Abuse**: User with `hasUsedTrial: true` updates `/accounts/{uid}` to `accessStatus: "pending_trial"`.
+5. **Shadow Ghost Field Injection**: User updates `/accounts/{uid}` including an extra `isAdmin: true` key.
+6. **Expired Account Workspace Write**: User whose `accessExpiresAt < request.time` attempts to create a post in `/users/{uid}/posts/{postId}`.
+7. **Pending Account Workspace Write**: User with `accessStatus: "pending_trial"` attempts to create `/users/{uid}`.
+8. **Cross-User PII Read**: User A attempts `get` on `/accounts/{userB}` or `list` on `/accounts`.
+9. **Non-Admin Pricing Tampering**: Non-admin user attempts `update` on `/appConfig/access` setting `subscriptionPrice: "$0"`.
+10. **Unverified Admin Email Spoof**: Request with `email: "exodovzl@gmail.com"` and `email_verified: false` attempts `list` on `/accounts`.
+11. **Admin Directory Escalation**: Regular user attempts to create `/admins/{uid}`.
+12. **Oversized ID / Payload Poisoning**: User creates a post with a 200-char ID or 5000-char caption exceeding schema bounds.

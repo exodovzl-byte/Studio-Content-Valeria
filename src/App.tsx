@@ -7,18 +7,21 @@ import {
 } from 'firebase/auth';
 import {
   Calendar,
+  CreditCard,
   Kanban,
   LayoutGrid,
-  LogIn,
   Moon,
   PanelRight,
   Plus,
   Search,
+  Shield,
   SlidersHorizontal,
   Sun,
   Trash2,
   X,
 } from 'lucide-react';
+import { AccessLobby } from './components/AccessLobby';
+import { AdminDashboard } from './components/AdminDashboard';
 import { BrandManagerModal } from './components/BrandManagerModal';
 import { BrandSelector } from './components/BrandSelector';
 import { CalendarView } from './components/CalendarView';
@@ -32,6 +35,7 @@ import { KanbanBoard } from './components/KanbanBoard';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { PWAStatusBanner } from './components/PWAStatusBanner';
 import { ProfileEditorModal } from './components/ProfileEditorModal';
+import { RenewalModal } from './components/RenewalModal';
 import {
   BRANDS,
   INITIAL_POSTS,
@@ -39,6 +43,21 @@ import {
   TODAY_KEY,
 } from './data/initialData';
 import { auth, googleProvider } from './firebase';
+import {
+  adminApproveSubscription,
+  adminApproveTrial,
+  adminDenyAccount,
+  adminUpdateAccount,
+  checkIsAdmin,
+  ensureUserAccount,
+  refreshUserAccountFromServer,
+  saveAccessConfig,
+  submitSubscriptionRequest,
+  submitTrialRequest,
+  subscribeToAccessConfig,
+  subscribeToAllAccounts,
+  subscribeToUserAccount,
+} from './services/accessFirestore';
 import {
   createBrandInFirestore,
   createPostInFirestore,
@@ -54,6 +73,15 @@ import {
   subscribeToPosts,
   updatePostInFirestore,
 } from './services/studioFirestore';
+import {
+  AccessConfig,
+  DEFAULT_ACCESS_CONFIG,
+  UserAccount,
+  formatDateShort,
+  getDaysRemaining,
+  hasPendingEarlyRenewal,
+  isAccountAccessActive,
+} from './types/access';
 import {
   ActiveView,
   Brand,
@@ -136,13 +164,23 @@ export default function App() {
   const [brandManagerOpen, setBrandManagerOpen] = useState<boolean>(false);
   const [clearModalOpen, setClearModalOpen] = useState<boolean>(false);
 
-  // Background cloud auth & sync state
+  // Background cloud auth, access control & admin state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [authBusy, setAuthBusy] = useState<boolean>(false);
   const [cloudLoaded, setCloudLoaded] = useState<boolean>(false);
-  const [guestMode, setGuestMode] = useState<boolean>(false);
   const [authHint, setAuthHint] = useState<string | null>(null);
+
+  const [accessConfig, setAccessConfig] = useState<AccessConfig>(
+    DEFAULT_ACCESS_CONFIG
+  );
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [accessChecked, setAccessChecked] = useState<boolean>(false);
+  const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
+  const [allAccounts, setAllAccounts] = useState<UserAccount[]>([]);
+  const [adminModeOpen, setAdminModeOpen] = useState<boolean>(false);
+  const [renewalModalOpen, setRenewalModalOpen] = useState<boolean>(false);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // Synchronous refs so React 19 batched state updaters never lose cloud writes
   const postsRef = useRef<ContentPost[]>(posts);
@@ -163,23 +201,149 @@ export default function App() {
   const pendingPostSaves = useRef<Record<string, ContentPost>>({});
   const pendingBrandSaves = useRef<Record<string, Brand>>({});
 
+  // Subscribe to public Lobby / Trial / Monthly Subscription config in real time
+  useEffect(() => {
+    const unsub = subscribeToAccessConfig(
+      (cfg) => setAccessConfig(cfg),
+      () => {
+        // Keep default config if temporarily offline
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // Re-evaluate expiration timestamps periodically and on tab focus
+  useEffect(() => {
+    const tick = () => setNowTick(Date.now());
+    const interval = setInterval(tick, 60_000);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, []);
+
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (nextUser) => {
       userRef.current = nextUser;
       setUser(nextUser);
       setAuthReady(true);
       if (nextUser) {
-        setGuestMode(false);
         setAuthHint(null);
       } else {
+        setIsAdmin(false);
+        setUserAccount(null);
+        setAllAccounts([]);
+        setAdminModeOpen(false);
+        setAccessChecked(true);
         setCloudLoaded(false);
       }
     });
     return () => unsubAuth();
   }, []);
 
+  // Verify admin role or subscribe to user's access/subscription status
   useEffect(() => {
-    if (!authReady || !user) return;
+    if (!authReady) return;
+    if (!user) {
+      setIsAdmin(false);
+      setUserAccount(null);
+      setAllAccounts([]);
+      setAccessChecked(true);
+      return;
+    }
+
+    let cancelled = false;
+    let unsubAccount: (() => void) | null = null;
+    let unsubAllAccounts: (() => void) | null = null;
+
+    setAccessChecked(false);
+
+    checkIsAdmin(user.uid, user.email, Boolean(user.emailVerified))
+      .then(async (adminFlag) => {
+        if (cancelled) return;
+        setIsAdmin(adminFlag);
+
+        if (adminFlag) {
+          setUserAccount(null);
+          setAccessChecked(true);
+          unsubAllAccounts = subscribeToAllAccounts(
+            (accountsList) => {
+              if (!cancelled) setAllAccounts(accountsList);
+            },
+            (err) => console.error('Admin accounts listener error:', err)
+          );
+          return;
+        }
+
+        // Regular user: ensure registration record exists so Admin can monitor them immediately
+        try {
+          const ensured = await ensureUserAccount(
+            user.uid,
+            user.email || '',
+            user.displayName || ''
+          );
+          if (!cancelled) {
+            setUserAccount(ensured);
+          }
+        } catch (err) {
+          console.error('Ensure account error:', err);
+        }
+
+        if (cancelled) return;
+        unsubAccount = subscribeToUserAccount(
+          user.uid,
+          (acc) => {
+            if (!cancelled) {
+              setUserAccount(acc);
+              setAccessChecked(true);
+            }
+          },
+          (err) => {
+            console.error('Account sync error:', err);
+            if (!cancelled) setAccessChecked(true);
+          }
+        );
+      })
+      .catch((err) => {
+        console.error('Admin check error:', err);
+        if (!cancelled) {
+          setIsAdmin(false);
+          setAccessChecked(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      unsubAccount?.();
+      unsubAllAccounts?.();
+    };
+  }, [authReady, user]);
+
+  const hasActiveStudioAccess = useMemo(() => {
+    if (!user || !accessChecked) return false;
+    if (isAdmin) return true;
+    return isAccountAccessActive(userAccount, nowTick);
+  }, [user, accessChecked, isAdmin, userAccount, nowTick]);
+
+  const pendingAdminCount = useMemo(() => {
+    if (!isAdmin) return 0;
+    return allAccounts.filter(
+      (acc) =>
+        acc.accessStatus === 'pending_trial' ||
+        acc.accessStatus === 'pending_subscription' ||
+        hasPendingEarlyRenewal(acc, nowTick)
+    ).length;
+  }, [isAdmin, allAccounts, nowTick]);
+
+  // Only load/sync workspace data when the user has verified active access or is admin
+  useEffect(() => {
+    if (!authReady || !user || !hasActiveStudioAccess) {
+      setCloudLoaded(false);
+      return;
+    }
 
     let cancelled = false;
     let unsubBrands: (() => void) | null = null;
@@ -287,7 +451,7 @@ export default function App() {
       unsubBrands?.();
       unsubPosts?.();
     };
-  }, [authReady, user]);
+  }, [authReady, user, hasActiveStudioAccess]);
 
   // Keep selectedBrandId valid whenever brands change (locally or remotely)
   useEffect(() => {
@@ -417,7 +581,7 @@ export default function App() {
     setAuthBusy(true);
     try {
       await signOut(auth);
-      setGuestMode(false);
+      setAdminModeOpen(false);
     } finally {
       setAuthBusy(false);
     }
@@ -836,7 +1000,11 @@ export default function App() {
     }
   };
 
-  if (!authReady || (user && !cloudLoaded)) {
+  if (
+    !authReady ||
+    (user && !accessChecked) ||
+    (user && hasActiveStudioAccess && !cloudLoaded)
+  ) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-6">
         <div className="flex items-center gap-2.5 mb-3">
@@ -844,66 +1012,122 @@ export default function App() {
             O
           </span>
           <span className="font-semibold text-sm tracking-tight">
-            OmniContent Studio
+            {accessConfig.lobbyTitle}
           </span>
         </div>
         <p className="text-xs text-slate-500 dark:text-zinc-400">
-          Cargando tu espacio de trabajo...
+          {user && !accessChecked
+            ? 'Verificando tu acceso...'
+            : 'Cargando tu espacio de trabajo...'}
         </p>
       </div>
     );
   }
 
-  if (!user && !guestMode) {
+  // Public Lobby & Access Gate (Not signed in, pending approval, expired, or suspended)
+  if (!user || !hasActiveStudioAccess) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 p-5 pt-safe pb-safe">
-        <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/80 shadow-xl p-6 space-y-5">
-          <div className="flex items-center gap-2.5">
-            <span className="w-9 h-9 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-sm font-mono">
-              O
-            </span>
-            <div>
-              <h1 className="font-semibold text-base tracking-tight">
-                OmniContent Studio
-              </h1>
-              <p className="text-xs text-slate-500 dark:text-zinc-400">
-                Planificación editorial multimarca
-              </p>
+      <AccessLobby
+        user={
+          user
+            ? {
+                uid: user.uid,
+                displayName: user.displayName,
+                email: user.email,
+                photoURL: user.photoURL,
+              }
+            : null
+        }
+        account={userAccount}
+        config={accessConfig}
+        darkMode={darkMode}
+        authBusy={authBusy}
+        authHint={authHint}
+        onToggleTheme={() => setDarkMode((d) => !d)}
+        onSignIn={handleSignIn}
+        onSignOut={handleSignOut}
+        onSubmitTrial={async (data) => {
+          if (!user) return;
+          await submitTrialRequest(user.uid, data);
+        }}
+        onSubmitSubscription={async (data) => {
+          if (!user) return;
+          await submitSubscriptionRequest(user.uid, userAccount, data);
+        }}
+        onRefreshStatus={async () => {
+          if (!user) return;
+          const fresh = await refreshUserAccountFromServer(user.uid);
+          setUserAccount(fresh);
+          setNowTick(Date.now());
+        }}
+      />
+    );
+  }
+
+  const userDaysLeft =
+    !isAdmin && userAccount
+      ? getDaysRemaining(userAccount.accessExpiresAtMs, nowTick)
+      : null;
+
+  const userPlanSummary =
+    !isAdmin && userAccount
+      ? `${
+          userAccount.accessStatus === 'trial_active' ? 'Prueba' : 'Suscripción'
+        } · ${userDaysLeft}d (vence ${formatDateShort(userAccount.accessExpiresAtMs)})`
+      : null;
+
+  const showExpiringSoonBanner =
+    !isAdmin &&
+    userAccount !== null &&
+    userDaysLeft !== null &&
+    userDaysLeft <= 5;
+
+  if (isAdmin && adminModeOpen) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100">
+        <header className="sticky top-0 z-30 pt-safe border-b border-slate-200 dark:border-zinc-800/90 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-7 h-7 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-zinc-950 flex items-center justify-center font-bold text-xs font-mono shrink-0">
+                O
+              </span>
+              <span className="font-semibold text-sm tracking-tight truncate whitespace-nowrap">
+                {accessConfig.lobbyTitle}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setDarkMode((d) => !d)}
+                aria-label={
+                  darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'
+                }
+                className="inline-flex items-center justify-center min-w-[38px] min-h-[38px] rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                {darkMode ? (
+                  <Sun className="w-4 h-4" />
+                ) : (
+                  <Moon className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
+        </header>
 
-          <p className="text-xs leading-relaxed text-slate-600 dark:text-zinc-300">
-            Inicia sesión con la misma cuenta de Google en tu teléfono y en tu
-            PC para mantener tus marcas, piezas y cambios actualizados en tiempo
-            real.
-          </p>
-
-          {authHint && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200 space-y-1.5">
-              <p>{authHint}</p>
-            </div>
-          )}
-
-          <div className="space-y-2.5">
-            <button
-              type="button"
-              disabled={authBusy}
-              onClick={handleSignIn}
-              className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50"
-            >
-              <LogIn className="w-4 h-4" />
-              {authBusy ? 'Conectando...' : 'Continuar con Google'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setGuestMode(true)}
-              className="w-full min-h-[42px] px-4 py-2 rounded-xl text-xs font-medium text-slate-500 dark:text-zinc-400 hover:text-slate-800 dark:hover:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800/70 transition-colors"
-            >
-              Continuar solo en este dispositivo (sin sincronizar)
-            </button>
-          </div>
-        </div>
+        <main className="flex-1 w-full px-4 sm:px-6 py-6 pb-safe">
+          <AdminDashboard
+            accounts={allAccounts}
+            config={accessConfig}
+            adminEmail={user.email || ''}
+            onBackToStudio={() => setAdminModeOpen(false)}
+            onSaveConfig={saveAccessConfig}
+            onApproveTrial={adminApproveTrial}
+            onApproveSubscription={adminApproveSubscription}
+            onUpdateAccount={adminUpdateAccount}
+            onDenyAccount={adminDenyAccount}
+          />
+        </main>
         <PWAStatusBanner />
       </div>
     );
@@ -954,6 +1178,11 @@ export default function App() {
               authBusy={authBusy}
               onSignIn={handleSignIn}
               onSignOut={handleSignOut}
+              isAdmin={isAdmin}
+              pendingAdminCount={pendingAdminCount}
+              onOpenAdmin={() => setAdminModeOpen(true)}
+              planSummary={userPlanSummary}
+              onOpenRenewal={() => setRenewalModalOpen(true)}
             />
 
             <button
@@ -1012,8 +1241,26 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Zone 3: Desktop Primary Action & Mobile Compact Header Utilities */}
+          {/* Zone 3: Desktop Primary Action, Admin Access & Mobile Utilities */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setAdminModeOpen(true)}
+                title="Abrir Panel de Administrador"
+                aria-label="Abrir Panel de Administrador"
+                className="inline-flex items-center justify-center gap-1.5 min-w-[38px] min-h-[38px] px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Shield className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Admin</span>
+                {pendingAdminCount > 0 && (
+                  <span className="font-mono tabular-nums text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                    ({pendingAdminCount})
+                  </span>
+                )}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setBrandManagerOpen(true)}
@@ -1052,22 +1299,27 @@ export default function App() {
         </div>
       </header>
 
-      {/* Local-only mode reminder so user can link their account anytime */}
-      {!user && guestMode && (
-        <div className="border-b border-indigo-500/20 bg-indigo-500/8 dark:bg-indigo-500/12">
-          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <p className="text-slate-700 dark:text-zinc-200">
-              Modo solo local activo: inicia sesión con Google para ver tus
-              cambios en tiempo real entre teléfono y PC.
+      {/* Renewal Reminder Banner when trial or monthly subscription is expiring soon */}
+      {showExpiringSoonBanner && (
+        <div className="border-b border-amber-500/25 bg-amber-500/10">
+          <div className="max-w-[1600px] mx-auto px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <p className="text-amber-900 dark:text-amber-200">
+              {userAccount.accessStatus === 'trial_active'
+                ? 'Tu modo de prueba'
+                : 'Tu suscripción mensual'}{' '}
+              vence en{' '}
+              <strong className="font-mono tabular-nums">
+                {userDaysLeft} {userDaysLeft === 1 ? 'día' : 'días'}
+              </strong>{' '}
+              ({formatDateShort(userAccount.accessExpiresAtMs)}).
             </p>
             <button
               type="button"
-              disabled={authBusy}
-              onClick={handleSignIn}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50 shrink-0"
+              onClick={() => setRenewalModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors shrink-0"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              Continuar con Google
+              <CreditCard className="w-3.5 h-3.5" />
+              Renovar suscripción
             </button>
           </div>
         </div>
@@ -1363,6 +1615,18 @@ export default function App() {
         onClose={() => setClearModalOpen(false)}
         onClearDemoOnly={clearDemoOnly}
         onClearCurrentBrand={clearCurrentBrandPosts}
+      />
+
+      {/* Early Monthly Renewal Modal for Active Users */}
+      <RenewalModal
+        open={renewalModalOpen}
+        config={accessConfig}
+        account={userAccount}
+        onClose={() => setRenewalModalOpen(false)}
+        onSubmitRenewal={async (data) => {
+          if (!user) return;
+          await submitSubscriptionRequest(user.uid, userAccount, data);
+        }}
       />
 
       {/* PWA Auto-Update & Offline Status */}

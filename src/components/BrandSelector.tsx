@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
+  CreditCard,
   LogIn,
   LogOut,
   RotateCcw,
+  Shield,
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
@@ -29,6 +31,11 @@ interface BrandSelectorProps {
   authBusy: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
+  isAdmin?: boolean;
+  pendingAdminCount?: number;
+  onOpenAdmin?: () => void;
+  planSummary?: string | null;
+  onOpenRenewal?: () => void;
 }
 
 export function BrandSelector({
@@ -44,6 +51,11 @@ export function BrandSelector({
   authBusy,
   onSignIn,
   onSignOut,
+  isAdmin = false,
+  pendingAdminCount = 0,
+  onOpenAdmin,
+  planSummary = null,
+  onOpenRenewal,
 }: BrandSelectorProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -206,7 +218,49 @@ export function BrandSelector({
             </button>
           </div>
 
-          <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800">
+          <div className="mt-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800 space-y-1">
+            {isAdmin && onOpenAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenAdmin();
+                  setOpen(false);
+                }}
+                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 transition-colors"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Shield className="w-3.5 h-3.5" />
+                  Panel de Administrador
+                </span>
+                {pendingAdminCount > 0 && (
+                  <span className="font-mono tabular-nums text-[11px] text-amber-600 dark:text-amber-400">
+                    {pendingAdminCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {!isAdmin && planSummary && (
+              <div className="px-2.5 py-1 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-zinc-400">
+                <span className="truncate font-mono tabular-nums">
+                  {planSummary}
+                </span>
+                {onOpenRenewal && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenRenewal();
+                      setOpen(false);
+                    }}
+                    className="inline-flex items-center gap-1 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                  >
+                    <CreditCard className="w-3 h-3" />
+                    Renovar
+                  </button>
+                )}
+              </div>
+            )}
+
             {accountUser ? (
               <div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
                 <div className="flex items-center gap-2 min-w-0">
