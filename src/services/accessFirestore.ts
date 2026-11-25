@@ -22,6 +22,7 @@ import {
   PaymentMethod,
   UserAccount,
   isAccountAccessActive,
+  normalizeSafeHttpUrl,
 } from '../types/access';
 
 function sanitizeString(
@@ -354,6 +355,18 @@ function mapAccessConfig(raw: Record<string, unknown> | undefined): AccessConfig
       120,
       DEFAULT_ACCESS_CONFIG.binanceHolder
     ),
+    binanceWalletAddress: sanitizeString(
+      raw.binanceWalletAddress,
+      200,
+      DEFAULT_ACCESS_CONFIG.binanceWalletAddress
+    ),
+    binancePaymentLink: normalizeSafeHttpUrl(
+      sanitizeString(
+        raw.binancePaymentLink,
+        500,
+        DEFAULT_ACCESS_CONFIG.binancePaymentLink
+      )
+    ),
     binanceNote: sanitizeString(
       raw.binanceNote,
       300,
@@ -520,6 +533,10 @@ export async function saveAccessConfig(config: AccessConfig): Promise<void> {
     binancePayId: sanitizeString(config.binancePayId, 100).trim(),
     binanceEmail: sanitizeString(config.binanceEmail, 180).trim(),
     binanceHolder: sanitizeString(config.binanceHolder, 120).trim(),
+    binanceWalletAddress: sanitizeString(config.binanceWalletAddress, 200).trim(),
+    binancePaymentLink: normalizeSafeHttpUrl(
+      sanitizeString(config.binancePaymentLink, 500)
+    ),
     binanceNote: sanitizeString(config.binanceNote, 300).trim(),
     pagoMovilEnabled: Boolean(config.pagoMovilEnabled),
     pagoMovilBank: sanitizeString(config.pagoMovilBank, 100).trim(),

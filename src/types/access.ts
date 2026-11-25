@@ -30,6 +30,8 @@ export interface AccessConfig {
   binancePayId: string;
   binanceEmail: string;
   binanceHolder: string;
+  binanceWalletAddress: string;
+  binancePaymentLink: string;
   binanceNote: string;
   pagoMovilEnabled: boolean;
   pagoMovilBank: string;
@@ -102,6 +104,8 @@ export const DEFAULT_ACCESS_CONFIG: AccessConfig = {
   binancePayId: '',
   binanceEmail: '',
   binanceHolder: '',
+  binanceWalletAddress: '',
+  binancePaymentLink: '',
   binanceNote: 'Enviar en USDT mediante Binance Pay.',
   pagoMovilEnabled: true,
   pagoMovilBank: '',
@@ -119,6 +123,25 @@ export function getPaymentMethodLabel(method: PaymentMethod): string {
   return 'Sin especificar';
 }
 
+export function normalizeSafeHttpUrl(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  const candidate = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed)
+      ? `https://${trimmed}`
+      : trimmed;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return '';
+    }
+    return parsed.toString().slice(0, 500);
+  } catch {
+    return '';
+  }
+}
+
 export function hasBinanceDetails(config: AccessConfig): boolean {
   return (
     config.binanceEnabled &&
@@ -126,6 +149,8 @@ export function hasBinanceDetails(config: AccessConfig): boolean {
       config.binancePayId.trim() ||
         config.binanceEmail.trim() ||
         config.binanceHolder.trim() ||
+        config.binanceWalletAddress.trim() ||
+        normalizeSafeHttpUrl(config.binancePaymentLink) ||
         config.binanceNote.trim()
     )
   );

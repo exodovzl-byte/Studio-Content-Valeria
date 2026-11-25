@@ -2,6 +2,7 @@ import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
   Check,
   Copy,
+  ExternalLink,
   Image as ImageIcon,
   Landmark,
   Trash2,
@@ -14,6 +15,7 @@ import {
   PaymentMethod,
   hasBinanceDetails,
   hasPagoMovilDetails,
+  normalizeSafeHttpUrl,
 } from '../types/access';
 
 interface PaymentMethodsPanelProps {
@@ -69,11 +71,17 @@ export function PaymentMethodsPanel({
     }
   };
 
+  const safeBinanceLink = normalizeSafeHttpUrl(config.binancePaymentLink);
+
   const handleCopyAllBinance = () => {
     const lines = [
       'Datos Binance Pay',
       config.binancePayId ? `Pay ID: ${config.binancePayId}` : '',
       config.binanceEmail ? `Correo: ${config.binanceEmail}` : '',
+      config.binanceWalletAddress
+        ? `Dirección de billetera: ${config.binanceWalletAddress}`
+        : '',
+      safeBinanceLink ? `Link de pago: ${safeBinanceLink}` : '',
       config.binanceHolder ? `Titular: ${config.binanceHolder}` : '',
       config.binanceNote ? `Nota: ${config.binanceNote}` : '',
     ].filter(Boolean);
@@ -349,6 +357,46 @@ export function PaymentMethodsPanel({
                       </span>
                     </div>
                     <CopyBtn id="bn-email" value={config.binanceEmail} />
+                  </div>
+                )}
+                {config.binanceWalletAddress && (
+                  <div className="py-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[11px] text-slate-500 dark:text-zinc-400 block">
+                        Dirección de billetera
+                      </span>
+                      <span className="font-mono font-semibold text-slate-900 dark:text-zinc-100 break-all">
+                        {config.binanceWalletAddress}
+                      </span>
+                    </div>
+                    <CopyBtn
+                      id="bn-wallet"
+                      value={config.binanceWalletAddress}
+                    />
+                  </div>
+                )}
+                {safeBinanceLink && (
+                  <div className="py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[11px] text-slate-500 dark:text-zinc-400 block">
+                        Link de pago Binance
+                      </span>
+                      <span className="font-mono text-[11px] font-medium text-amber-700 dark:text-amber-300 break-all">
+                        {safeBinanceLink}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <CopyBtn id="bn-link" value={safeBinanceLink} />
+                      <a
+                        href={safeBinanceLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-500 hover:bg-amber-400 text-zinc-950 transition-colors whitespace-nowrap"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Abrir link</span>
+                      </a>
+                    </div>
                   </div>
                 )}
                 {config.binanceHolder && (

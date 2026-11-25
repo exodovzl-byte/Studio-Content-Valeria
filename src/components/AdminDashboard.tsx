@@ -1706,6 +1706,47 @@ export function AdminDashboard({
 
                 <div>
                   <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                    Dirección de billetera (USDT / Red)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={draftConfig.binanceWalletAddress}
+                    onChange={(e) =>
+                      setDraftConfig((c) => ({
+                        ...c,
+                        binanceWalletAddress: e.target.value,
+                      }))
+                    }
+                    placeholder="Ej. TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE (TRC20 / BEP20)"
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                    Link de pago de Binance (opcional)
+                  </label>
+                  <input
+                    type="url"
+                    maxLength={500}
+                    value={draftConfig.binancePaymentLink}
+                    onChange={(e) =>
+                      setDraftConfig((c) => ({
+                        ...c,
+                        binancePaymentLink: e.target.value,
+                      }))
+                    }
+                    placeholder="https://s.binance.com/..."
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                  />
+                  <p className="text-[10px] text-slate-500 dark:text-zinc-400 mt-1">
+                    Usa un enlace que empiece con https:// para mostrar un botón directo de pago al cliente.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
                     Nota o red aceptada (ej. USDT por Binance Pay / TRC20)
                   </label>
                   <input

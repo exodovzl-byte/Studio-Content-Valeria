@@ -76,7 +76,8 @@ service cloud.firestore {
           'trialTitle', 'trialDescription', 'subscriptionTitle',
           'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
           'subscriptionFeatures', 'paymentInstructions', 'supportContact',
-          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder', 'binanceNote',
+          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder',
+          'binanceWalletAddress', 'binancePaymentLink', 'binanceNote',
           'pagoMovilEnabled', 'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
           'pagoMovilHolder', 'pagoMovilNote',
           'updatedAt'
@@ -100,6 +101,8 @@ service cloud.firestore {
         && (!('binancePayId' in data) || (data.binancePayId is string && data.binancePayId.size() <= 100))
         && (!('binanceEmail' in data) || (data.binanceEmail is string && data.binanceEmail.size() <= 180))
         && (!('binanceHolder' in data) || (data.binanceHolder is string && data.binanceHolder.size() <= 120))
+        && (!('binanceWalletAddress' in data) || (data.binanceWalletAddress is string && data.binanceWalletAddress.size() <= 200))
+        && (!('binancePaymentLink' in data) || (data.binancePaymentLink is string && data.binancePaymentLink.size() <= 500 && (data.binancePaymentLink == '' || data.binancePaymentLink.matches('^https?://.+'))))
         && (!('binanceNote' in data) || (data.binanceNote is string && data.binanceNote.size() <= 300))
         && (!('pagoMovilEnabled' in data) || data.pagoMovilEnabled is bool)
         && (!('pagoMovilBank' in data) || (data.pagoMovilBank is string && data.pagoMovilBank.size() <= 100))
@@ -293,7 +296,8 @@ service cloud.firestore {
           'trialTitle', 'trialDescription', 'subscriptionTitle',
           'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
           'subscriptionFeatures', 'paymentInstructions', 'supportContact',
-          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder', 'binanceNote',
+          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder',
+          'binanceWalletAddress', 'binancePaymentLink', 'binanceNote',
           'pagoMovilEnabled', 'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
           'pagoMovilHolder', 'pagoMovilNote',
           'updatedAt'
