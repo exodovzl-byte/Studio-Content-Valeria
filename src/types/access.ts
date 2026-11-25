@@ -4,10 +4,13 @@ export type AccessStatus =
   | 'pending_subscription'
   | 'trial_active'
   | 'subscription_active'
+  | 'permanent_active'
   | 'rejected'
   | 'suspended';
 
 export type RequestedPlan = 'none' | 'trial' | 'subscription';
+
+export type PaymentMethod = 'none' | 'binance' | 'pago_movil' | 'other';
 
 export interface AccessConfig {
   lobbyTitle: string;
@@ -23,6 +26,17 @@ export interface AccessConfig {
   subscriptionFeatures: string[];
   paymentInstructions: string;
   supportContact: string;
+  binanceEnabled: boolean;
+  binancePayId: string;
+  binanceEmail: string;
+  binanceHolder: string;
+  binanceNote: string;
+  pagoMovilEnabled: boolean;
+  pagoMovilBank: string;
+  pagoMovilPhone: string;
+  pagoMovilId: string;
+  pagoMovilHolder: string;
+  pagoMovilNote: string;
   updatedAtMs?: number | null;
 }
 
@@ -44,6 +58,8 @@ export interface UserAccount {
   trialDaysGranted: number;
   accessExpiresAtMs: number | null;
   paymentReference: string;
+  paymentMethod: PaymentMethod;
+  paymentProofUrl: string;
   userNote: string;
   adminNote: string;
   requestedAtMs: number | null;
@@ -80,16 +96,61 @@ export const DEFAULT_ACCESS_CONFIG: AccessConfig = {
     'Renovación mensual flexible con soporte directo',
   ],
   paymentInstructions:
-    'Realiza el pago mensual por el método acordado con el administrador y escribe tu número de referencia o nombre del titular abajo para activar tu cuenta.',
+    'Realiza el pago mensual por Binance o Pago Móvil, sube el capture del comprobante abajo y espera la aprobación del administrador.',
   supportContact: 'exodovzl@gmail.com',
+  binanceEnabled: true,
+  binancePayId: '',
+  binanceEmail: '',
+  binanceHolder: '',
+  binanceNote: 'Enviar en USDT mediante Binance Pay.',
+  pagoMovilEnabled: true,
+  pagoMovilBank: '',
+  pagoMovilPhone: '',
+  pagoMovilId: '',
+  pagoMovilHolder: '',
+  pagoMovilNote: 'Calcular monto a la tasa BCV del día.',
   updatedAtMs: null,
 };
+
+export function getPaymentMethodLabel(method: PaymentMethod): string {
+  if (method === 'binance') return 'Binance';
+  if (method === 'pago_movil') return 'Pago Móvil';
+  if (method === 'other') return 'Otro método';
+  return 'Sin especificar';
+}
+
+export function hasBinanceDetails(config: AccessConfig): boolean {
+  return (
+    config.binanceEnabled &&
+    Boolean(
+      config.binancePayId.trim() ||
+        config.binanceEmail.trim() ||
+        config.binanceHolder.trim() ||
+        config.binanceNote.trim()
+    )
+  );
+}
+
+export function hasPagoMovilDetails(config: AccessConfig): boolean {
+  return (
+    config.pagoMovilEnabled &&
+    Boolean(
+      config.pagoMovilBank.trim() ||
+        config.pagoMovilPhone.trim() ||
+        config.pagoMovilId.trim() ||
+        config.pagoMovilHolder.trim()
+    )
+  );
+}
 
 export function isAccountAccessActive(
   account: UserAccount | null,
   nowMs: number = Date.now()
 ): boolean {
   if (!account) return false;
+  if (account.accessStatus === 'permanent_active') {
+    return true;
+  }
   if (
     account.accessStatus !== 'trial_active' &&
     account.accessStatus !== 'subscription_active'
@@ -120,6 +181,7 @@ export function hasPendingEarlyRenewal(
   nowMs: number = Date.now()
 ): boolean {
   if (!isAccountAccessActive(account, nowMs) || !account) return false;
+  if (account.accessStatus === 'permanent_active') return false;
   if (account.requestedPlan !== 'subscription') return false;
   if (account.requestedAtMs === null) return false;
   return (

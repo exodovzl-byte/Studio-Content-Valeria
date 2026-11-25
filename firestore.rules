@@ -51,9 +51,14 @@ service cloud.firestore {
     function hasActiveAccess(userId) {
       return isAdmin() || (
         exists(/databases/$(database)/documents/accounts/$(userId))
-        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessStatus in ['trial_active', 'subscription_active']
-        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt is timestamp
-        && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt > request.time
+        && (
+          get(/databases/$(database)/documents/accounts/$(userId)).data.accessStatus == 'permanent_active'
+          || (
+            get(/databases/$(database)/documents/accounts/$(userId)).data.accessStatus in ['trial_active', 'subscription_active']
+            && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt is timestamp
+            && get(/databases/$(database)/documents/accounts/$(userId)).data.accessExpiresAt > request.time
+          )
+        )
       );
     }
 
@@ -71,6 +76,9 @@ service cloud.firestore {
           'trialTitle', 'trialDescription', 'subscriptionTitle',
           'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
           'subscriptionFeatures', 'paymentInstructions', 'supportContact',
+          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder', 'binanceNote',
+          'pagoMovilEnabled', 'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
+          'pagoMovilHolder', 'pagoMovilNote',
           'updatedAt'
         ])
         && data.lobbyTitle is string && data.lobbyTitle.size() >= 1 && data.lobbyTitle.size() <= 100
@@ -88,6 +96,17 @@ service cloud.firestore {
         && (data.subscriptionFeatures.size() == 0 || (data.subscriptionFeatures[0] is string && data.subscriptionFeatures[0].size() <= 120))
         && data.paymentInstructions is string && data.paymentInstructions.size() <= 1000
         && data.supportContact is string && data.supportContact.size() <= 160
+        && (!('binanceEnabled' in data) || data.binanceEnabled is bool)
+        && (!('binancePayId' in data) || (data.binancePayId is string && data.binancePayId.size() <= 100))
+        && (!('binanceEmail' in data) || (data.binanceEmail is string && data.binanceEmail.size() <= 180))
+        && (!('binanceHolder' in data) || (data.binanceHolder is string && data.binanceHolder.size() <= 120))
+        && (!('binanceNote' in data) || (data.binanceNote is string && data.binanceNote.size() <= 300))
+        && (!('pagoMovilEnabled' in data) || data.pagoMovilEnabled is bool)
+        && (!('pagoMovilBank' in data) || (data.pagoMovilBank is string && data.pagoMovilBank.size() <= 100))
+        && (!('pagoMovilPhone' in data) || (data.pagoMovilPhone is string && data.pagoMovilPhone.size() <= 40))
+        && (!('pagoMovilId' in data) || (data.pagoMovilId is string && data.pagoMovilId.size() <= 40))
+        && (!('pagoMovilHolder' in data) || (data.pagoMovilHolder is string && data.pagoMovilHolder.size() <= 120))
+        && (!('pagoMovilNote' in data) || (data.pagoMovilNote is string && data.pagoMovilNote.size() <= 300))
         && data.updatedAt is timestamp;
     }
 
@@ -110,7 +129,8 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'uid', 'email', 'displayName', 'businessName', 'accessStatus',
           'requestedPlan', 'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
-          'paymentReference', 'userNote', 'adminNote', 'requestedAt',
+          'paymentReference', 'paymentMethod', 'paymentProofUrl',
+          'userNote', 'adminNote', 'requestedAt',
           'approvedAt', 'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid)
@@ -120,13 +140,16 @@ service cloud.firestore {
         && data.businessName is string && data.businessName.size() <= 120
         && data.accessStatus in [
           'unassigned', 'pending_trial', 'pending_subscription',
-          'trial_active', 'subscription_active', 'rejected', 'suspended'
+          'trial_active', 'subscription_active', 'permanent_active',
+          'rejected', 'suspended'
         ]
         && data.requestedPlan in ['none', 'trial', 'subscription']
         && data.hasUsedTrial is bool
         && data.trialDaysGranted is number && data.trialDaysGranted >= 0 && data.trialDaysGranted <= 365
         && (data.accessExpiresAt == null || data.accessExpiresAt is timestamp)
         && data.paymentReference is string && data.paymentReference.size() <= 200
+        && (!('paymentMethod' in data) || data.paymentMethod in ['none', 'binance', 'pago_movil', 'other'])
+        && (!('paymentProofUrl' in data) || (data.paymentProofUrl is string && data.paymentProofUrl.size() <= 250000))
         && data.userNote is string && data.userNote.size() <= 400
         && data.adminNote is string && data.adminNote.size() <= 400
         && (data.requestedAt == null || data.requestedAt is timestamp)
@@ -249,7 +272,7 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    // ==================== APP CONFIG (LOBBY & SUBSCRIPTION SETTINGS) ====================
+    // ==================== APP CONFIG (LOBBY, PLANS & PAYMENT METHODS) ====================
     match /appConfig/{configId} {
       allow get: if isValidId(configId) && configId == 'access';
       allow list: if false;
@@ -270,6 +293,9 @@ service cloud.firestore {
           'trialTitle', 'trialDescription', 'subscriptionTitle',
           'subscriptionPrice', 'subscriptionCycleDays', 'subscriptionDescription',
           'subscriptionFeatures', 'paymentInstructions', 'supportContact',
+          'binanceEnabled', 'binancePayId', 'binanceEmail', 'binanceHolder', 'binanceNote',
+          'pagoMovilEnabled', 'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
+          'pagoMovilHolder', 'pagoMovilNote',
           'updatedAt'
         ]);
 
@@ -347,13 +373,14 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Tier 1: Admin monitoring, approvals, custom dates, legacy email update, suspensions & notes
+          // Tier 1: Admin monitoring, approvals, permanent access, custom dates, legacy email update, suspensions & notes
           (
             isAdmin()
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'email', 'displayName', 'businessName', 'accessStatus', 'requestedPlan',
               'hasUsedTrial', 'trialDaysGranted', 'accessExpiresAt',
-              'paymentReference', 'userNote', 'adminNote', 'requestedAt',
+              'paymentReference', 'paymentMethod', 'paymentProofUrl',
+              'userNote', 'adminNote', 'requestedAt',
               'approvedAt', 'updatedAt'
             ])
           ) ||
@@ -376,7 +403,7 @@ service cloud.firestore {
               'userNote', 'requestedAt', 'updatedAt'
             ])
           ) ||
-          // Tier 2B: Owner submitting a monthly subscription or renewal payment request
+          // Tier 2B: Owner submitting a monthly subscription or renewal payment request with proof capture
           (
             isOwner(userId)
             && incoming().email == existing().email
@@ -390,10 +417,11 @@ service cloud.firestore {
             && incoming().requestedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'businessName', 'accessStatus', 'requestedPlan',
-              'paymentReference', 'userNote', 'requestedAt', 'updatedAt'
+              'paymentReference', 'paymentMethod', 'paymentProofUrl',
+              'userNote', 'requestedAt', 'updatedAt'
             ])
           ) ||
-          // Tier 2C: Active user submitting early monthly renewal without losing current active access
+          // Tier 2C: Active user submitting early monthly renewal with proof capture without losing current active access
           (
             isOwner(userId)
             && incoming().email == existing().email
@@ -408,7 +436,8 @@ service cloud.firestore {
             && incoming().requestedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'businessName', 'requestedPlan',
-              'paymentReference', 'userNote', 'requestedAt', 'updatedAt'
+              'paymentReference', 'paymentMethod', 'paymentProofUrl',
+              'userNote', 'requestedAt', 'updatedAt'
             ])
           ) ||
           // Tier 2D: Legacy pre-registered owner syncing their verified email on first login
@@ -459,10 +488,13 @@ service cloud.firestore {
         && hasActiveAccess(userId)
         && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']);
 
-      allow delete: if isValidId(userId)
-        && isOwner(userId)
-        && (resource == null || existing().ownerId == request.auth.uid)
-        && hasActiveAccess(userId);
+      allow delete: if isValidId(userId) && (
+        isBootstrapAdmin() || (
+          isOwner(userId)
+          && (resource == null || existing().ownerId == request.auth.uid)
+          && hasActiveAccess(userId)
+        )
+      );
 
       // ==================== BRANDS SUBCOLLECTION ====================
       match /brands/{brandId} {

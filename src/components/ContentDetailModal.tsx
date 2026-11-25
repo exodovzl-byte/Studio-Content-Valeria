@@ -1,7 +1,9 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Check,
   Copy,
+  Film,
   Image as ImageIcon,
   Star,
   Trash2,
@@ -24,12 +26,32 @@ import {
   MediaItem,
   Platform,
 } from '../types/content';
+import {
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_IMAGE_SIZE_MB,
+  MAX_MEDIA_ITEMS,
+  MAX_VIDEO_SIZE_BYTES,
+  MAX_VIDEO_SIZE_MB,
+  extractInitialVideoThumbnail,
+  formatFileSizeMB,
+} from '../utils/videoThumbnail';
+import { VideoThumbnailPickerModal } from './VideoThumbnailPickerModal';
 
 interface ContentDetailModalProps {
   post: ContentPost | null;
   onClose: () => void;
   onUpdatePost: (postId: string, patch: Partial<ContentPost>) => void;
   onDeletePost: (postId: string) => void;
+}
+
+function revokeIfBlobUrl(url: string | undefined) {
+  if (url && url.startsWith('blob:')) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // Ignore already-revoked blob URLs
+    }
+  }
 }
 
 export function ContentDetailModal({
@@ -42,18 +64,32 @@ export function ContentDetailModal({
   const [commentAuthor, setCommentAuthor] = useState<Assignee>('Andrés');
   const [commentText, setCommentText] = useState('');
   const [copiedCopy, setCopiedCopy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [processingUpload, setProcessingUpload] = useState(false);
+  const [pickerTargetId, setPickerTargetId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setUploadError(null);
+    setPickerTargetId(null);
+  }, [post?.id]);
 
   useEffect(() => {
     if (!post) return;
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !pickerTargetId) onClose();
     };
     document.addEventListener('keydown', handleEsc);
     return () => document.removeEventListener('keydown', handleEsc);
-  }, [post, onClose]);
+  }, [post, pickerTargetId, onClose]);
 
   if (!post) return null;
+
+  const pickerItem = pickerTargetId
+    ? (post.mediaItems || []).find(
+        (m) => m.id === pickerTargetId && m.type === 'video' && Boolean(m.url)
+      ) || null
+    : null;
 
   const handleField = <K extends keyof ContentPost>(
     field: K,
@@ -62,62 +98,179 @@ export function ContentDetailModal({
     onUpdatePost(post.id, { [field]: value });
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!rawFiles.length) return;
 
-    const readPromises = files.map(async (file): Promise<MediaItem> => {
+    setUploadError(null);
+    const existingMedia = post.mediaItems || [];
+    const remainingSlots = Math.max(0, MAX_MEDIA_ITEMS - existingMedia.length);
+    if (remainingSlots === 0) {
+      setUploadError(
+        `Límite alcanzado: máximo ${MAX_MEDIA_ITEMS} archivos por pieza.`
+      );
+      return;
+    }
+
+    const rejectedMessages: string[] = [];
+    const acceptedFiles: File[] = [];
+
+    for (const file of rawFiles) {
       const isVideo = file.type.startsWith('video/');
-      const id = `media-${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2, 7)}`;
-
-      if (!isVideo) {
-        const compressed = await compressImageFile(file, 720, 0.78);
-        return {
-          id,
-          name: file.name,
-          type: 'image',
-          url: compressed || URL.createObjectURL(file),
-        };
+      const isImage = file.type.startsWith('image/');
+      if (!isVideo && !isImage) {
+        rejectedMessages.push(`"${file.name}" no es una imagen o video válido.`);
+        continue;
       }
 
-      return {
-        id,
-        name: file.name,
-        type: 'video',
-        url: URL.createObjectURL(file),
-      };
-    });
+      if (isVideo && file.size > MAX_VIDEO_SIZE_BYTES) {
+        rejectedMessages.push(
+          `"${file.name}" pesa ${formatFileSizeMB(file.size)} MB (límite máximo: ${MAX_VIDEO_SIZE_MB} MB por video).`
+        );
+        continue;
+      }
 
-    Promise.all(readPromises).then((created) => {
-      const nextMedia = [...(post.mediaItems || []), ...created];
-      const firstImage = nextMedia.find((m) => m.type === 'image');
+      if (isImage && file.size > MAX_IMAGE_SIZE_BYTES) {
+        rejectedMessages.push(
+          `"${file.name}" pesa ${formatFileSizeMB(file.size)} MB (límite máximo: ${MAX_IMAGE_SIZE_MB} MB por imagen).`
+        );
+        continue;
+      }
+
+      if (acceptedFiles.length >= remainingSlots) {
+        rejectedMessages.push(
+          `Solo se admitieron ${remainingSlots} archivo(s) más (máximo ${MAX_MEDIA_ITEMS} por pieza).`
+        );
+        break;
+      }
+      acceptedFiles.push(file);
+    }
+
+    if (rejectedMessages.length > 0) {
+      setUploadError(rejectedMessages.join(' '));
+    }
+
+    if (acceptedFiles.length === 0) return;
+
+    setProcessingUpload(true);
+    try {
+      const created: MediaItem[] = [];
+      for (const file of acceptedFiles) {
+        const isVideo = file.type.startsWith('video/');
+        const id = `media-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`;
+
+        if (!isVideo) {
+          const compressed = await compressImageFile(file, 720, 0.78);
+          if (!compressed) {
+            setUploadError(
+              `No se pudo optimizar la imagen "${file.name}". Intenta con otra imagen más ligera.`
+            );
+            continue;
+          }
+          created.push({
+            id,
+            name: file.name,
+            type: 'image',
+            url: compressed,
+            fileSizeMB: formatFileSizeMB(file.size),
+          });
+        } else {
+          const localBlobUrl = URL.createObjectURL(file);
+          const { thumbnailUrl } =
+            await extractInitialVideoThumbnail(localBlobUrl);
+          created.push({
+            id,
+            name: file.name,
+            type: 'video',
+            url: localBlobUrl,
+            thumbnailUrl: thumbnailUrl || undefined,
+            fileSizeMB: formatFileSizeMB(file.size),
+          });
+        }
+      }
+
+      if (created.length === 0) return;
+
+      const nextMedia = [...existingMedia, ...created];
+      const firstUploadedVideo = created.find((m) => m.type === 'video');
+      const fallbackCover =
+        nextMedia.find((m) => m.type === 'image' && m.url)?.url ||
+        nextMedia.find((m) => m.type === 'video' && m.thumbnailUrl)
+          ?.thumbnailUrl ||
+        '';
+      const hasAnyVideo = nextMedia.some((m) => m.type === 'video');
+
       onUpdatePost(post.id, {
         mediaItems: nextMedia,
-        coverUrl: post.coverUrl || firstImage?.url || '',
+        mediaType: hasAnyVideo ? 'video' : post.mediaType,
+        coverUrl:
+          post.coverUrl ||
+          firstUploadedVideo?.thumbnailUrl ||
+          fallbackCover,
       });
-    });
 
-    e.target.value = '';
+      // Open frame picker automatically so the user can pick the exact thumbnail for their video
+      if (firstUploadedVideo) {
+        setPickerTargetId(firstUploadedVideo.id);
+      }
+    } finally {
+      setProcessingUpload(false);
+    }
+  };
+
+  const handleSelectVideoThumbnail = (mediaId: string, dataUrl: string) => {
+    const nextMedia = (post.mediaItems || []).map((item) =>
+      item.id === mediaId ? { ...item, thumbnailUrl: dataUrl } : item
+    );
+    onUpdatePost(post.id, {
+      mediaItems: nextMedia,
+      mediaType: 'video',
+      coverUrl: dataUrl,
+    });
   };
 
   const removeMedia = (mediaId: string) => {
     const removed = (post.mediaItems || []).find((m) => m.id === mediaId);
+    if (removed) {
+      revokeIfBlobUrl(removed.url);
+    }
+    if (pickerTargetId === mediaId) {
+      setPickerTargetId(null);
+    }
+
     const nextMedia = (post.mediaItems || []).filter((m) => m.id !== mediaId);
-    const firstImage = nextMedia.find((m) => m.type === 'image');
+    const removedVisualUrl =
+      removed?.type === 'video' ? removed.thumbnailUrl : removed?.url;
+    const fallbackCover =
+      nextMedia.find((m) => m.type === 'image' && m.url)?.url ||
+      nextMedia.find((m) => m.type === 'video' && m.thumbnailUrl)
+        ?.thumbnailUrl ||
+      '';
     const nextCover =
-      removed && post.coverUrl === removed.url
-        ? firstImage?.url || ''
+      removedVisualUrl && post.coverUrl === removedVisualUrl
+        ? fallbackCover
         : post.coverUrl;
+    const stillHasVideo = nextMedia.some((m) => m.type === 'video');
+
     onUpdatePost(post.id, {
       mediaItems: nextMedia,
+      mediaType: stillHasVideo ? 'video' : 'image',
       coverUrl: nextCover,
     });
   };
 
   const setAsCover = (url: string) => {
+    if (!url) return;
     onUpdatePost(post.id, { coverUrl: url });
+  };
+
+  const handleDeleteCurrentPost = () => {
+    (post.mediaItems || []).forEach((item) => revokeIfBlobUrl(item.url));
+    onDeletePost(post.id);
+    onClose();
   };
 
   const addChecklistItem = (e: FormEvent) => {
@@ -229,10 +382,7 @@ export function ContentDetailModal({
 
             <button
               type="button"
-              onClick={() => {
-                onDeletePost(post.id);
-                onClose();
-              }}
+              onClick={handleDeleteCurrentPost}
               className="inline-flex items-center justify-center min-w-[38px] min-h-[38px] p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 transition-colors"
               title="Eliminar pieza"
               aria-label="Eliminar pieza"
@@ -258,18 +408,24 @@ export function ContentDetailModal({
           <div className="lg:col-span-7 p-4 sm:p-5 space-y-4 sm:space-y-5">
             {/* Multimedia */}
             <div>
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
-                <span className="text-xs font-semibold text-slate-600 dark:text-zinc-300 flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  Multimedia de referencia
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <div>
+                  <span className="text-xs font-semibold text-slate-600 dark:text-zinc-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    Multimedia de referencia
+                  </span>
+                  <p className="text-[10px] text-slate-400 dark:text-zinc-500 mt-0.5">
+                    Videos hasta {MAX_VIDEO_SIZE_MB} MB (elige el fotograma de miniatura) · Imágenes hasta {MAX_IMAGE_SIZE_MB} MB
+                  </p>
+                </div>
                 <button
                   type="button"
+                  disabled={processingUpload}
                   onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 sm:py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 sm:py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  Subir archivo
+                  {processingUpload ? 'Procesando...' : 'Subir archivo'}
                 </button>
                 <input
                   ref={fileInputRef}
@@ -280,6 +436,23 @@ export function ContentDetailModal({
                   className="hidden"
                 />
               </div>
+
+              {uploadError && (
+                <div className="mb-2.5 flex items-start justify-between gap-2 rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                  <div className="flex items-start gap-1.5 min-w-0">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{uploadError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUploadError(null)}
+                    aria-label="Cerrar error de subida"
+                    className="p-0.5 rounded hover:bg-rose-500/15 shrink-0"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 {post.coverUrl &&
@@ -298,7 +471,15 @@ export function ContentDetailModal({
                   )}
 
                 {(post.mediaItems || []).map((item) => {
-                  const isCover = post.coverUrl === item.url;
+                  const visualCoverCandidate =
+                    item.type === 'video' ? item.thumbnailUrl || '' : item.url;
+                  const isCover =
+                    Boolean(visualCoverCandidate) &&
+                    post.coverUrl === visualCoverCandidate;
+                  const hasLiveVideoStream =
+                    item.type === 'video' && Boolean(item.url);
+                  const videoPoster = item.thumbnailUrl || post.coverUrl || '';
+
                   return (
                     <div
                       key={item.id}
@@ -309,11 +490,35 @@ export function ContentDetailModal({
                       }`}
                     >
                       {item.type === 'video' ? (
-                        <video
-                          src={item.url}
-                          controls
-                          className="w-full h-full object-cover"
-                        />
+                        hasLiveVideoStream ? (
+                          <video
+                            src={item.url}
+                            poster={videoPoster || undefined}
+                            controls
+                            playsInline
+                            className="w-full h-full object-cover bg-black"
+                          />
+                        ) : videoPoster ? (
+                          <div className="relative w-full h-full">
+                            <img
+                              src={videoPoster}
+                              alt={`Miniatura de ${item.name}`}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                            <span className="absolute top-1.5 left-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/75 text-[10px] font-medium text-white">
+                              <Film className="w-2.5 h-2.5" />
+                              Miniatura
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-1 p-2 text-center bg-zinc-900 text-zinc-400">
+                            <Film className="w-5 h-5" />
+                            <span className="text-[10px] leading-tight">
+                              Video sin miniatura
+                            </span>
+                          </div>
+                        )
                       ) : (
                         <img
                           src={item.url}
@@ -324,12 +529,23 @@ export function ContentDetailModal({
                       )}
 
                       <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                        {item.type === 'image' && !isCover && (
+                        {hasLiveVideoStream && (
                           <button
                             type="button"
-                            onClick={() => setAsCover(item.url)}
+                            onClick={() => setPickerTargetId(item.id)}
+                            className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md bg-indigo-600/95 text-white hover:bg-indigo-500 text-[10px] font-semibold shadow-sm"
+                            title="Elegir fotograma del video como portada / miniatura"
+                          >
+                            <Film className="w-3 h-3" />
+                            <span>Miniatura</span>
+                          </button>
+                        )}
+                        {visualCoverCandidate && !isCover && (
+                          <button
+                            type="button"
+                            onClick={() => setAsCover(visualCoverCandidate)}
                             className="p-1.5 sm:p-1 rounded-md bg-black/75 text-white hover:bg-indigo-600"
-                            title="Usar como portada"
+                            title="Usar como portada del feed"
                           >
                             <Star className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
                           </button>
@@ -344,9 +560,12 @@ export function ContentDetailModal({
                         </button>
                       </div>
 
-                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5 text-[10px] text-white truncate">
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent p-1.5 text-[10px] text-white truncate pointer-events-none">
                         {isCover ? 'Portada · ' : ''}
                         {item.name}
+                        {typeof item.fileSizeMB === 'number'
+                          ? ` (${item.fileSizeMB} MB)`
+                          : ''}
                       </div>
                     </div>
                   );
@@ -360,7 +579,7 @@ export function ContentDetailModal({
                       className="col-span-2 sm:col-span-3 py-7 rounded-lg border border-dashed border-slate-300 dark:border-zinc-700 flex flex-col items-center justify-center text-xs text-slate-500 dark:text-zinc-400 hover:border-indigo-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                     >
                       <UploadCloud className="w-5 h-5 mb-1.5" />
-                      Sube artes finales, fotos o clips de referencia
+                      Sube artes finales, fotos o clips (máx. {MAX_VIDEO_SIZE_MB} MB por video)
                     </button>
                   )}
               </div>
@@ -673,6 +892,20 @@ export function ContentDetailModal({
           </div>
         </div>
       </div>
+
+      {pickerItem && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <VideoThumbnailPickerModal
+            open={Boolean(pickerItem)}
+            videoUrl={pickerItem.url}
+            videoName={pickerItem.name}
+            onClose={() => setPickerTargetId(null)}
+            onSelectThumbnail={(dataUrl) =>
+              handleSelectVideoThumbnail(pickerItem.id, dataUrl)
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }

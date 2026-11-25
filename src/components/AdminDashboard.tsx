@@ -1,10 +1,13 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Calendar,
   Check,
   CreditCard,
+  Image as ImageIcon,
+  Infinity as InfinityIcon,
   KeyRound,
+  Landmark,
   Lock,
   LogOut,
   Plus,
@@ -16,6 +19,7 @@ import {
   UserCheck,
   UserX,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import {
@@ -27,17 +31,20 @@ import {
   dateInputToEndOfDay,
   formatDateShort,
   getDaysRemaining,
+  getPaymentMethodLabel,
   hasPendingEarlyRenewal,
   isAccountAccessActive,
   isAccountExpired,
   toDateInputValue,
 } from '../types/access';
+import { PaymentProofModal } from './PaymentProofModal';
 
 interface AdminDashboardProps {
   accounts: UserAccount[];
   config: AccessConfig;
   adminEmail: string;
   pinConfig: AdminPinConfig | null;
+  notificationControl?: ReactNode;
   onBackToStudio: () => void;
   onLockAdmin: () => void;
   onSignOut: () => void;
@@ -56,6 +63,10 @@ interface AdminDashboardProps {
     customDate?: Date,
     adminNote?: string
   ) => Promise<void>;
+  onGrantPermanent: (
+    account: UserAccount,
+    adminNote?: string
+  ) => Promise<void>;
   onUpdateAccount: (
     account: UserAccount,
     updates: {
@@ -72,6 +83,7 @@ interface AdminDashboardProps {
     status: 'rejected' | 'suspended',
     adminNote?: string
   ) => Promise<void>;
+  onDeleteAccount: (account: UserAccount) => Promise<void>;
 }
 
 type AdminTab = 'accounts' | 'settings';
@@ -117,6 +129,13 @@ function getAccountDisplayMeta(
         ? 'text-amber-600 dark:text-amber-400'
         : 'text-sky-600 dark:text-sky-400',
       category: 'trial',
+    };
+  }
+  if (account.accessStatus === 'permanent_active') {
+    return {
+      label: 'Suscripción permanente',
+      colorClass: 'text-violet-600 dark:text-violet-400',
+      category: 'subscription',
     };
   }
   if (account.accessStatus === 'subscription_active') {
@@ -177,6 +196,7 @@ export function AdminDashboard({
   config,
   adminEmail,
   pinConfig,
+  notificationControl,
   onBackToStudio,
   onLockAdmin,
   onSignOut,
@@ -185,13 +205,19 @@ export function AdminDashboard({
   onChangeAdminPin,
   onApproveTrial,
   onApproveSubscription,
+  onGrantPermanent,
   onUpdateAccount,
   onDenyAccount,
+  onDeleteAccount,
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('accounts');
   const [filter, setFilter] = useState<AccountFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [busyUid, setBusyUid] = useState<string | null>(null);
+  const [confirmDeleteUid, setConfirmDeleteUid] = useState<string | null>(null);
+  const [inspectingProofUid, setInspectingProofUid] = useState<string | null>(
+    null
+  );
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Per-account custom editor state
@@ -252,8 +278,9 @@ export function AdminDashboard({
       if (acc.accessStatus === 'trial_active' && isAccountAccessActive(acc, nowMs)) {
         trialActive += 1;
       } else if (
-        acc.accessStatus === 'subscription_active' &&
-        isAccountAccessActive(acc, nowMs)
+        acc.accessStatus === 'permanent_active' ||
+        (acc.accessStatus === 'subscription_active' &&
+          isAccountAccessActive(acc, nowMs))
       ) {
         subActive += 1;
       } else if (
@@ -295,6 +322,7 @@ export function AdminDashboard({
         acc.displayName.toLowerCase().includes(q) ||
         acc.businessName.toLowerCase().includes(q) ||
         acc.paymentReference.toLowerCase().includes(q) ||
+        getPaymentMethodLabel(acc.paymentMethod).toLowerCase().includes(q) ||
         acc.adminNote.toLowerCase().includes(q)
       );
     });
@@ -355,7 +383,20 @@ export function AdminDashboard({
     try {
       await onApproveSubscription(acc, config.subscriptionCycleDays);
       setActionMessage(
-        `Suscripción mensual (+${config.subscriptionCycleDays} días) aprobada para ${acc.email}.`
+        `Suscripción mensual (+${config.subscriptionCycleDays} días) aprobada para ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
+      );
+    } finally {
+      setBusyUid(null);
+    }
+  };
+
+  const handleQuickGrantPermanent = async (acc: UserAccount) => {
+    setBusyUid(acc.uid);
+    setActionMessage(null);
+    try {
+      await onGrantPermanent(acc);
+      setActionMessage(
+        `Suscripción permanente otorgada a ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
       );
     } finally {
       setBusyUid(null);
@@ -364,16 +405,67 @@ export function AdminDashboard({
 
   const handleQuickSuspend = async (
     acc: UserAccount,
-    status: 'rejected' | 'suspended'
+    status: 'rejected' | 'suspended',
+    adminNote?: string
   ) => {
     setBusyUid(acc.uid);
     setActionMessage(null);
     try {
-      await onDenyAccount(acc, status);
+      await onDenyAccount(acc, status, adminNote);
       setActionMessage(
         status === 'rejected'
-          ? `Solicitud rechazada para ${acc.email}.`
-          : `Acceso suspendido para ${acc.email}.`
+          ? `Solicitud rechazada para ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
+          : `Acceso suspendido para ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
+      );
+    } finally {
+      setBusyUid(null);
+    }
+  };
+
+  const inspectingAccount = useMemo(
+    () => accounts.find((a) => a.uid === inspectingProofUid) || null,
+    [accounts, inspectingProofUid]
+  );
+
+  const handleApproveFromProofModal = async (
+    acc: UserAccount,
+    adminNote: string
+  ) => {
+    setBusyUid(acc.uid);
+    setActionMessage(null);
+    try {
+      await onApproveSubscription(
+        acc,
+        config.subscriptionCycleDays,
+        undefined,
+        adminNote
+      );
+      setInspectingProofUid(null);
+      setActionMessage(
+        `Pago verificado y acceso autorizado (+${config.subscriptionCycleDays} días) para ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
+      );
+    } finally {
+      setBusyUid(null);
+    }
+  };
+
+  const handleRejectFromProofModal = async (
+    acc: UserAccount,
+    adminNote: string
+  ) => {
+    await handleQuickSuspend(acc, 'rejected', adminNote);
+    setInspectingProofUid(null);
+  };
+
+  const handleConfirmDeleteAccount = async (acc: UserAccount) => {
+    setBusyUid(acc.uid);
+    setActionMessage(null);
+    try {
+      await onDeleteAccount(acc);
+      setConfirmDeleteUid(null);
+      if (editingUid === acc.uid) setEditingUid(null);
+      setActionMessage(
+        `Cuenta eliminada: ${acc.email === LEGACY_PLACEHOLDER_EMAIL ? acc.displayName || acc.uid : acc.email}.`
       );
     } finally {
       setBusyUid(null);
@@ -386,11 +478,14 @@ export function AdminDashboard({
     setActionMessage(null);
     try {
       const parsedDate =
-        editStatus === 'trial_active' || editStatus === 'subscription_active'
-          ? dateInputToEndOfDay(editDateStr)
-          : acc.accessExpiresAtMs
-            ? new Date(acc.accessExpiresAtMs)
-            : null;
+        editStatus === 'permanent_active'
+          ? null
+          : editStatus === 'trial_active' ||
+              editStatus === 'subscription_active'
+            ? dateInputToEndOfDay(editDateStr)
+            : acc.accessExpiresAtMs
+              ? new Date(acc.accessExpiresAtMs)
+              : null;
 
       await onUpdateAccount(acc, {
         email: editEmail.trim() || undefined,
@@ -544,6 +639,8 @@ export function AdminDashboard({
               Planes y Lobby
             </button>
           </div>
+
+          {notificationControl}
 
           <button
             type="button"
@@ -751,15 +848,26 @@ export function AdminDashboard({
                           <span className="font-mono tabular-nums text-[11px]">
                             Registro: {formatDateShort(acc.createdAtMs)}
                           </span>
-                          {acc.accessExpiresAtMs && !acc.isAdminAccount && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="font-mono tabular-nums text-[11px]">
-                                Vence: {formatDateShort(acc.accessExpiresAtMs)}
-                                {isActive ? ` (${daysLeft}d)` : ''}
-                              </span>
-                            </>
-                          )}
+                          {acc.accessStatus === 'permanent_active' &&
+                            !acc.isAdminAccount && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-[11px] font-medium text-violet-600 dark:text-violet-400">
+                                  Sin vencimiento (Permanente)
+                                </span>
+                              </>
+                            )}
+                          {acc.accessExpiresAtMs &&
+                            acc.accessStatus !== 'permanent_active' &&
+                            !acc.isAdminAccount && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono tabular-nums text-[11px]">
+                                  Vence: {formatDateShort(acc.accessExpiresAtMs)}
+                                  {isActive ? ` (${daysLeft}d)` : ''}
+                                </span>
+                              </>
+                            )}
                           {!acc.isAdminAccount && (
                             <>
                               <span aria-hidden="true">·</span>
@@ -772,8 +880,22 @@ export function AdminDashboard({
                           )}
                         </div>
 
-                        {(acc.paymentReference || acc.userNote || acc.adminNote) && (
-                          <div className="pt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 dark:text-zinc-300">
+                        {(acc.paymentReference ||
+                          (acc.paymentMethod && acc.paymentMethod !== 'none') ||
+                          acc.paymentProofUrl ||
+                          acc.userNote ||
+                          acc.adminNote) && (
+                          <div className="pt-1.5 flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[11px] text-slate-600 dark:text-zinc-300">
+                            {acc.paymentMethod && acc.paymentMethod !== 'none' && (
+                              <span>
+                                <strong className="font-semibold text-slate-800 dark:text-zinc-100">
+                                  Método:
+                                </strong>{' '}
+                                <span className="font-semibold text-indigo-700 dark:text-indigo-300">
+                                  {getPaymentMethodLabel(acc.paymentMethod)}
+                                </span>
+                              </span>
+                            )}
                             {acc.paymentReference && (
                               <span>
                                 <strong className="font-semibold text-slate-800 dark:text-zinc-100">
@@ -783,6 +905,31 @@ export function AdminDashboard({
                                   {acc.paymentReference}
                                 </span>
                               </span>
+                            )}
+                            {acc.paymentProofUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setInspectingProofUid(acc.uid)}
+                                className={`inline-flex items-center gap-1.5 pl-1 pr-2.5 py-0.5 rounded-lg border text-[11px] font-semibold transition-colors ${
+                                  acc.accessStatus === 'pending_subscription' ||
+                                  hasPendingEarlyRenewal(acc, nowMs)
+                                    ? 'border-amber-500/45 bg-amber-500/12 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20'
+                                    : 'border-indigo-500/35 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/15'
+                                }`}
+                              >
+                                <img
+                                  src={acc.paymentProofUrl}
+                                  alt="Miniatura de capture"
+                                  className="w-5 h-5 rounded object-cover border border-black/10 shrink-0"
+                                />
+                                <ImageIcon className="w-3 h-3 shrink-0" />
+                                <span>
+                                  {acc.accessStatus === 'pending_subscription' ||
+                                  hasPendingEarlyRenewal(acc, nowMs)
+                                    ? 'Verificar capture'
+                                    : 'Ver capture'}
+                                </span>
+                              </button>
                             )}
                             {acc.userNote && (
                               <span>
@@ -807,6 +954,28 @@ export function AdminDashboard({
                         <div className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400 shrink-0">
                           Cuenta protegida de administrador
                         </div>
+                      ) : confirmDeleteUid === acc.uid ? (
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0 rounded-lg border border-rose-500/35 bg-rose-500/10 px-2.5 py-1.5">
+                          <span className="text-xs font-semibold text-rose-700 dark:text-rose-300 mr-1">
+                            ¿Borrar esta cuenta?
+                          </span>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleConfirmDeleteAccount(acc)}
+                            className="px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors disabled:opacity-50"
+                          >
+                            Sí, borrar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setConfirmDeleteUid(null)}
+                            className="px-2.5 py-1 rounded-md text-xs font-medium border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
                       ) : (
                         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           <button
@@ -828,8 +997,21 @@ export function AdminDashboard({
                             title={`Aprobar o renovar suscripción mensual (+${config.subscriptionCycleDays} días)`}
                           >
                             <CreditCard className="w-3.5 h-3.5" />
-                            Suscripción (+{config.subscriptionCycleDays}d)
+                            +{config.subscriptionCycleDays}d
                           </button>
+
+                          {acc.accessStatus !== 'permanent_active' && (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleQuickGrantPermanent(acc)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-semibold border border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
+                              title="Otorgar suscripción permanente sin fecha de vencimiento"
+                            >
+                              <InfinityIcon className="w-3.5 h-3.5" />
+                              Permanente
+                            </button>
+                          )}
 
                           <button
                             type="button"
@@ -842,7 +1024,7 @@ export function AdminDashboard({
                             }`}
                           >
                             <SlidersHorizontal className="w-3.5 h-3.5" />
-                            Editar fecha
+                            Editar
                           </button>
 
                           {acc.accessStatus !== 'suspended' && (
@@ -858,7 +1040,7 @@ export function AdminDashboard({
                                     : 'suspended'
                                 )
                               }
-                              className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
+                              className="inline-flex items-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
                               title="Negar o suspender acceso"
                             >
                               <UserX className="w-3.5 h-3.5" />
@@ -870,6 +1052,18 @@ export function AdminDashboard({
                               </span>
                             </button>
                           )}
+
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => setConfirmDeleteUid(acc.uid)}
+                            className="inline-flex items-center justify-center gap-1 px-2.5 py-2 sm:py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-rose-500/8 text-rose-700 dark:text-rose-300 hover:bg-rose-500/15 transition-colors whitespace-nowrap disabled:opacity-50"
+                            title="Borrar cuenta del panel"
+                            aria-label="Borrar cuenta"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Borrar</span>
+                          </button>
                         </div>
                       )}
                     </div>
@@ -913,6 +1107,9 @@ export function AdminDashboard({
                               <option value="subscription_active">
                                 Suscripción mensual activa
                               </option>
+                              <option value="permanent_active">
+                                Suscripción permanente (sin vencimiento)
+                              </option>
                               <option value="pending_trial">
                                 Pendiente prueba
                               </option>
@@ -928,15 +1125,22 @@ export function AdminDashboard({
                             <label className="block text-[11px] font-semibold text-slate-600 dark:text-zinc-300 mb-1">
                               Fecha exacta de vencimiento
                             </label>
-                            <div className="flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              <input
-                                type="date"
-                                value={editDateStr}
-                                onChange={(e) => setEditDateStr(e.target.value)}
-                                className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-mono tabular-nums text-slate-900 dark:text-zinc-100"
-                              />
-                            </div>
+                            {editStatus === 'permanent_active' ? (
+                              <div className="min-h-[38px] px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/8 flex items-center gap-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+                                <InfinityIcon className="w-3.5 h-3.5 shrink-0" />
+                                Sin vencimiento (Permanente)
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                <input
+                                  type="date"
+                                  value={editDateStr}
+                                  onChange={(e) => setEditDateStr(e.target.value)}
+                                  className="w-full min-h-[38px] px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-mono tabular-nums text-slate-900 dark:text-zinc-100"
+                                />
+                              </div>
+                            )}
                           </div>
 
                           <div>
@@ -948,13 +1152,14 @@ export function AdminDashboard({
                                 <button
                                   key={days}
                                   type="button"
+                                  disabled={editStatus === 'permanent_active'}
                                   onClick={() => {
                                     applyPresetDays(days);
                                     if (editStatus === 'trial_active') {
                                       setEditTrialDays(days);
                                     }
                                   }}
-                                  className="px-2 py-1.5 rounded-md text-[11px] font-mono tabular-nums border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-200"
+                                  className="px-2 py-1.5 rounded-md text-[11px] font-mono tabular-nums border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-200 disabled:opacity-40"
                                 >
                                   +{days}d
                                 </button>
@@ -1280,12 +1485,252 @@ export function AdminDashboard({
               />
             </div>
 
+            {/* Structured Payment Methods: Pago Móvil & Binance */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">
+              {/* Pago Móvil Card */}
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/[0.03] dark:bg-emerald-500/[0.05] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                      <Landmark className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Datos de Pago Móvil
+                      </h3>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Visible con botón copiar en el Lobby y renovación
+                      </p>
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 dark:text-zinc-200 cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={draftConfig.pagoMovilEnabled}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          pagoMovilEnabled: e.target.checked,
+                        }))
+                      }
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    Activo
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Banco (nombre y código)
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={100}
+                      value={draftConfig.pagoMovilBank}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          pagoMovilBank: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. Banesco (0134)"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Teléfono
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={40}
+                      value={draftConfig.pagoMovilPhone}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          pagoMovilPhone: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. 0412-1234567"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Cédula / RIF
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={40}
+                      value={draftConfig.pagoMovilId}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          pagoMovilId: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. V-25.123.456"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Titular (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={120}
+                      value={draftConfig.pagoMovilHolder}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          pagoMovilHolder: e.target.value,
+                        }))
+                      }
+                      placeholder="Nombre del titular"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                    Nota de Pago Móvil (ej. tasa BCV)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={300}
+                    value={draftConfig.pagoMovilNote}
+                    onChange={(e) =>
+                      setDraftConfig((c) => ({
+                        ...c,
+                        pagoMovilNote: e.target.value,
+                      }))
+                    }
+                    placeholder="Ej. Calcular el monto a tasa BCV del día."
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100"
+                  />
+                </div>
+              </div>
+
+              {/* Binance Card */}
+              <div className="rounded-xl border border-amber-500/35 bg-amber-500/[0.04] dark:bg-amber-500/[0.06] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                      <Wallet className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-900 dark:text-white">
+                        Datos de Binance Pay
+                      </h3>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                        Para pagos en USDT con Pay ID o correo
+                      </p>
+                    </div>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 dark:text-zinc-200 cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={draftConfig.binanceEnabled}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          binanceEnabled: e.target.checked,
+                        }))
+                      }
+                      className="rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                    />
+                    Activo
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Binance Pay ID / UID
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={100}
+                      value={draftConfig.binancePayId}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          binancePayId: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. 482910384"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                      Correo de Binance
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={180}
+                      value={draftConfig.binanceEmail}
+                      onChange={(e) =>
+                        setDraftConfig((c) => ({
+                          ...c,
+                          binanceEmail: e.target.value,
+                        }))
+                      }
+                      placeholder="Ej. tupago@gmail.com"
+                      className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs font-mono text-slate-900 dark:text-zinc-100"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                    Alias / Titular Binance (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={120}
+                    value={draftConfig.binanceHolder}
+                    onChange={(e) =>
+                      setDraftConfig((c) => ({
+                        ...c,
+                        binanceHolder: e.target.value,
+                      }))
+                    }
+                    placeholder="Nombre o alias que aparece al enviar"
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-600 dark:text-zinc-300 mb-1">
+                    Nota o red aceptada (ej. USDT por Binance Pay / TRC20)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={300}
+                    value={draftConfig.binanceNote}
+                    onChange={(e) =>
+                      setDraftConfig((c) => ({
+                        ...c,
+                        binanceNote: e.target.value,
+                      }))
+                    }
+                    placeholder="Ej. Enviar USDT por Binance Pay sin comisión."
+                    className="w-full min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
-                Instrucciones de pago (Pago Móvil, Zelle, Binance, link, WhatsApp...)
+                Instrucciones generales adicionales (opcional)
               </label>
               <textarea
-                rows={4}
+                rows={2}
                 maxLength={1000}
                 value={draftConfig.paymentInstructions}
                 onChange={(e) =>
@@ -1294,7 +1739,7 @@ export function AdminDashboard({
                     paymentInstructions: e.target.value,
                   }))
                 }
-                placeholder="Escribe aquí tus cuentas, enlaces de pago o pasos para que el cliente te envíe la referencia..."
+                placeholder="Cualquier indicación extra (ej. horario de verificación, WhatsApp, etc.)..."
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100 leading-relaxed"
               />
             </div>
@@ -1496,6 +1941,16 @@ export function AdminDashboard({
           </form>
         </div>
       )}
+
+      {/* Full-Screen Payment Capture Verification & Approval Modal */}
+      <PaymentProofModal
+        account={inspectingAccount}
+        config={config}
+        busy={Boolean(inspectingAccount && busyUid === inspectingAccount.uid)}
+        onClose={() => setInspectingProofUid(null)}
+        onApprovePayment={handleApproveFromProofModal}
+        onRejectPayment={handleRejectFromProofModal}
+      />
     </div>
   );
 }

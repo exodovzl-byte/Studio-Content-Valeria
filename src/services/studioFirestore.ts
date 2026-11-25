@@ -20,6 +20,31 @@ import { Brand, BrandHighlight, BrandId, ContentPost } from '../types/content';
 
 const HEX_PATTERN = /^#[0-9a-fA-F]{3,8}$/;
 const ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const MAX_POST_MEDIA_BYTES = 700_000;
+const FIRESTORE_BATCH_CHUNK_SIZE = 400;
+
+function isSafePersistableMediaUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  if (value.startsWith('blob:')) return false;
+  return (
+    value.startsWith('https://') ||
+    value.startsWith('http://') ||
+    value.startsWith('data:image/')
+  );
+}
+
+async function commitInChunks<T>(
+  items: T[],
+  applyOp: (batch: ReturnType<typeof writeBatch>, item: T, index: number) => void
+): Promise<void> {
+  if (items.length === 0) return;
+  for (let start = 0; start < items.length; start += FIRESTORE_BATCH_CHUNK_SIZE) {
+    const slice = items.slice(start, start + FIRESTORE_BATCH_CHUNK_SIZE);
+    const batch = writeBatch(db);
+    slice.forEach((item, offset) => applyOp(batch, item, start + offset));
+    await batch.commit();
+  }
+}
 
 function sanitizeString(value: unknown, maxLength: number, fallback = ''): string {
   const str = typeof value === 'string' ? value : fallback;
@@ -104,22 +129,60 @@ function buildPostFirestorePayload(
   ownerId: string,
   isCreate: boolean
 ): Record<string, unknown> {
+  const safeCover =
+    isSafePersistableMediaUrl(post.coverUrl) && post.coverUrl.length <= 250000
+      ? post.coverUrl
+      : '';
+
+  let remainingMediaBudget = Math.max(0, MAX_POST_MEDIA_BYTES - safeCover.length);
+
   const safeMedia = Array.isArray(post.mediaItems)
-    ? post.mediaItems.slice(0, 10).map((m, idx) => ({
-        id:
-          typeof m.id === 'string' && ID_PATTERN.test(m.id)
-            ? m.id.slice(0, 64)
-            : `m-${idx}`,
-        name: sanitizeString(m.name, 120, 'archivo'),
-        type: m.type === 'video' ? 'video' : 'image',
-        // Avoid saving ephemeral blob URLs or oversized strings to Firestore
-        url:
-          typeof m.url === 'string' &&
-          !m.url.startsWith('blob:') &&
-          m.url.length <= 180000
-            ? m.url
-            : '',
-      }))
+    ? post.mediaItems.slice(0, 10).map((m, idx) => {
+        const isVideo = m.type === 'video';
+        let persistedUrl = '';
+        if (
+          !isVideo &&
+          isSafePersistableMediaUrl(m.url) &&
+          m.url.length <= 180000 &&
+          m.url.length <= remainingMediaBudget
+        ) {
+          persistedUrl = m.url;
+          remainingMediaBudget -= m.url.length;
+        }
+
+        let persistedThumb = '';
+        if (
+          isVideo &&
+          isSafePersistableMediaUrl(m.thumbnailUrl) &&
+          m.thumbnailUrl.length <= 180000 &&
+          m.thumbnailUrl.length <= remainingMediaBudget
+        ) {
+          persistedThumb = m.thumbnailUrl;
+          remainingMediaBudget -= m.thumbnailUrl.length;
+        }
+
+        const item: Record<string, unknown> = {
+          id:
+            typeof m.id === 'string' && ID_PATTERN.test(m.id)
+              ? m.id.slice(0, 64)
+              : `m-${idx}`,
+          name: sanitizeString(m.name, 120, 'archivo'),
+          type: isVideo ? 'video' : 'image',
+          url: persistedUrl,
+        };
+        if (persistedThumb) {
+          item.thumbnailUrl = persistedThumb;
+        }
+        if (
+          typeof m.fileSizeMB === 'number' &&
+          Number.isFinite(m.fileSizeMB) &&
+          m.fileSizeMB >= 0 &&
+          m.fileSizeMB <= 500
+        ) {
+          item.fileSizeMB = Math.round(m.fileSizeMB * 10) / 10;
+        }
+        return item;
+      })
     : [];
 
   const safeChecklist = Array.isArray(post.checklist)
@@ -144,13 +207,6 @@ function buildPostFirestorePayload(
         time: sanitizeString(c.time, 40, 'Ahora'),
       }))
     : [];
-
-  const safeCover =
-    typeof post.coverUrl === 'string' &&
-    !post.coverUrl.startsWith('blob:') &&
-    post.coverUrl.length <= 250000
-      ? post.coverUrl
-      : '';
 
   const safeFeedOrder =
     typeof post.feedOrder === 'number' && Number.isFinite(post.feedOrder)
@@ -257,12 +313,10 @@ export async function ensureWorkspaceAndSeed(
     );
     const postSnap = await getDocs(postsQuery);
     if (postSnap.empty) {
-      const batch = writeBatch(db);
-      postsToSeed.forEach((p) => {
+      await commitInChunks(postsToSeed, (batch, p) => {
         const ref = doc(db, 'users', uid, 'posts', p.id);
         batch.set(ref, buildPostFirestorePayload(p, uid, true));
       });
-      await batch.commit();
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, postsPath);
@@ -367,48 +421,9 @@ export function subscribeToBrands(
   return onSnapshot(
     q,
     (snapshot) => {
-      const items = snapshot.docs.map((d) => {
-        const raw = d.data() as Brand & { createdAt?: unknown };
-        const defaultMatch = BRANDS.find((b) => b.id === d.id);
-        const merged: Brand = defaultMatch
-          ? { ...defaultMatch, ...raw, id: d.id }
-          : {
-              id: d.id,
-              name: raw.name || 'Marca',
-              badge: raw.badge || 'MC',
-              accent: raw.accent || '#4f46e5',
-              accentLight: raw.accentLight || '#eef2ff',
-              description: raw.description || '',
-              handle: raw.handle || 'marca',
-              category: raw.category || '',
-              website: raw.website || '',
-              avatarUrl: raw.avatarUrl || '',
-              verified: Boolean(raw.verified),
-              igPostsOverride: raw.igPostsOverride || '',
-              igFollowers: raw.igFollowers || '0',
-              igFollowing: raw.igFollowing || '0',
-              showStoryRing: raw.showStoryRing !== false,
-              ttFollowing: raw.ttFollowing || '0',
-              ttFollowers: raw.ttFollowers || '0',
-              ttLikes: raw.ttLikes || '0',
-              ttShowPinned: raw.ttShowPinned !== false,
-              highlights: Array.isArray(raw.highlights) ? raw.highlights : [],
-            };
-        return {
-          brand: merged,
-          defaultIdx: DEFAULT_BRAND_ORDER.get(d.id) ?? 999,
-          createdMs: getTimestampMillis(raw.createdAt),
-        };
-      });
-
-      items.sort((a, b) => {
-        if (a.defaultIdx !== b.defaultIdx) return a.defaultIdx - b.defaultIdx;
-        if (a.createdMs !== b.createdMs) return a.createdMs - b.createdMs;
-        return a.brand.name.localeCompare(b.brand.name);
-      });
-
-      if (items.length > 0) {
-        onData(items.map((item) => item.brand));
+      const mapped = mapBrandDocs(snapshot.docs);
+      if (mapped.length > 0) {
+        onData(mapped);
       }
     },
     (error) => {
@@ -503,12 +518,10 @@ export async function deleteBrandAndPostsInFirestore(
 ): Promise<void> {
   const path = `users/${uid}/brands/${brandId}`;
   try {
-    const batch = writeBatch(db);
-    postIds.forEach((postId) => {
+    await commitInChunks(postIds, (batch, postId) => {
       batch.delete(doc(db, 'users', uid, 'posts', postId));
     });
-    batch.delete(doc(db, 'users', uid, 'brands', brandId));
-    await batch.commit();
+    await deleteDoc(doc(db, 'users', uid, 'brands', brandId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -570,11 +583,9 @@ export async function deletePostsBatchInFirestore(
   if (postIds.length === 0) return;
   const path = `users/${uid}/posts`;
   try {
-    const batch = writeBatch(db);
-    postIds.forEach((postId) => {
+    await commitInChunks(postIds, (batch, postId) => {
       batch.delete(doc(db, 'users', uid, 'posts', postId));
     });
-    await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -586,15 +597,13 @@ export async function reorderFeedInFirestore(
 ): Promise<void> {
   const path = `users/${uid}/posts`;
   try {
-    const batch = writeBatch(db);
-    orderedIds.forEach((postId, idx) => {
+    await commitInChunks(orderedIds, (batch, postId, idx) => {
       const ref = doc(db, 'users', uid, 'posts', postId);
       batch.update(ref, {
         feedOrder: idx,
         updatedAt: serverTimestamp(),
       });
     });
-    await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -629,15 +638,13 @@ export async function resetDemoInFirestore(
     });
     await brandBatch.commit();
 
-    const postBatch = writeBatch(db);
-    existingPostIds.forEach((postId) => {
-      postBatch.delete(doc(db, 'users', uid, 'posts', postId));
+    await commitInChunks(existingPostIds, (batch, postId) => {
+      batch.delete(doc(db, 'users', uid, 'posts', postId));
     });
-    INITIAL_POSTS.forEach((p) => {
+    await commitInChunks(INITIAL_POSTS, (batch, p) => {
       const ref = doc(db, 'users', uid, 'posts', p.id);
-      postBatch.set(ref, buildPostFirestorePayload(p, uid, true));
+      batch.set(ref, buildPostFirestorePayload(p, uid, true));
     });
-    await postBatch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import {
   ArrowRight,
   Calendar,
@@ -18,10 +18,15 @@ import {
 } from 'lucide-react';
 import {
   AccessConfig,
+  PaymentMethod,
   UserAccount,
   formatDateShort,
+  getPaymentMethodLabel,
+  hasBinanceDetails,
+  hasPagoMovilDetails,
   isAccountExpired,
 } from '../types/access';
+import { PaymentMethodsPanel } from './PaymentMethodsPanel';
 import { PWAInstallButton } from './PWAInstallButton';
 import { PWAStatusBanner } from './PWAStatusBanner';
 
@@ -39,6 +44,7 @@ interface AccessLobbyProps {
   authHint: string | null;
   isAdmin: boolean;
   pendingAdminCount: number;
+  notificationControl?: ReactNode;
   onToggleTheme: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -52,7 +58,9 @@ interface AccessLobbyProps {
   onSubmitSubscription: (data: {
     displayName: string;
     businessName: string;
+    paymentMethod: PaymentMethod;
     paymentReference: string;
+    paymentProofUrl: string;
     userNote: string;
   }) => Promise<void>;
   onRefreshStatus: () => Promise<void>;
@@ -67,6 +75,7 @@ export function AccessLobby({
   authHint,
   isAdmin,
   pendingAdminCount,
+  notificationControl,
   onToggleTheme,
   onSignIn,
   onSignOut,
@@ -82,7 +91,9 @@ export function AccessLobby({
   const [editingPending, setEditingPending] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [businessName, setBusinessName] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pago_movil');
   const [paymentReference, setPaymentReference] = useState('');
+  const [paymentProofUrl, setPaymentProofUrl] = useState('');
   const [userNote, setUserNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
@@ -98,9 +109,19 @@ export function AccessLobby({
     if (!user) return;
     setDisplayName(account?.displayName || user.displayName || '');
     setBusinessName(account?.businessName || '');
+    setPaymentMethod(
+      account?.paymentMethod && account.paymentMethod !== 'none'
+        ? account.paymentMethod
+        : hasPagoMovilDetails(config)
+          ? 'pago_movil'
+          : hasBinanceDetails(config)
+            ? 'binance'
+            : 'other'
+    );
     setPaymentReference(account?.paymentReference || '');
+    setPaymentProofUrl(account?.paymentProofUrl || '');
     setUserNote(account?.userNote || '');
-  }, [user, account]);
+  }, [user, account, config]);
 
   useEffect(() => {
     if (!canRequestTrial) {
@@ -143,9 +164,9 @@ export function AccessLobby({
       return;
     }
 
-    if (!paymentReference.trim()) {
+    if (!paymentProofUrl) {
       setErrorMsg(
-        'Ingresa tu referencia o detalle del pago mensual para que el administrador lo verifique.'
+        'Sube el capture de tu comprobante de pago para que el administrador pueda verificarlo y autorizar tu acceso.'
       );
       return;
     }
@@ -155,12 +176,14 @@ export function AccessLobby({
       await onSubmitSubscription({
         displayName: displayName.trim() || user?.displayName || '',
         businessName: businessName.trim(),
+        paymentMethod,
         paymentReference: paymentReference.trim(),
+        paymentProofUrl,
         userNote: userNote.trim(),
       });
       setEditingPending(false);
       setFeedback(
-        'Pago registrado. El administrador aprobará tu suscripción mensual a la brevedad.'
+        'Comprobante enviado. El administrador verificará tu capture y aprobará tu acceso a la brevedad.'
       );
     } catch {
       setErrorMsg('No se pudo registrar tu solicitud de suscripción. Intenta de nuevo.');
@@ -197,6 +220,7 @@ export function AccessLobby({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {user && notificationControl}
             <PWAInstallButton />
 
             <button
@@ -471,6 +495,25 @@ export function AccessLobby({
                   </ul>
                 )}
 
+                {(hasPagoMovilDetails(config) || hasBinanceDetails(config)) && (
+                  <div className="text-[11px] text-slate-500 dark:text-zinc-400 pt-2 border-t border-slate-100 dark:border-zinc-800 flex flex-wrap items-center gap-1.5">
+                    <span>Métodos disponibles:</span>
+                    {hasPagoMovilDetails(config) && (
+                      <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                        Pago Móvil
+                      </span>
+                    )}
+                    {hasPagoMovilDetails(config) && hasBinanceDetails(config) && (
+                      <span aria-hidden="true">·</span>
+                    )}
+                    {hasBinanceDetails(config) && (
+                      <span className="font-semibold text-amber-700 dark:text-amber-400">
+                        Binance Pay
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   disabled={authBusy}
@@ -537,6 +580,16 @@ export function AccessLobby({
                     </span>
                   </div>
                 )}
+                {account.paymentMethod && account.paymentMethod !== 'none' && (
+                  <div className="py-2.5 flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-zinc-400">
+                      Método de pago
+                    </span>
+                    <span className="font-semibold text-slate-900 dark:text-zinc-100">
+                      {getPaymentMethodLabel(account.paymentMethod)}
+                    </span>
+                  </div>
+                )}
                 {account.paymentReference && (
                   <div className="py-2.5 flex items-center justify-between gap-3">
                     <span className="text-slate-500 dark:text-zinc-400">
@@ -558,6 +611,24 @@ export function AccessLobby({
                   </div>
                 )}
               </div>
+
+              {account.paymentProofUrl && (
+                <div className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/60 p-3 flex items-center gap-3">
+                  <img
+                    src={account.paymentProofUrl}
+                    alt="Capture de comprobante enviado"
+                    className="w-16 h-16 rounded-lg object-cover border border-slate-200 dark:border-zinc-700 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                      Capture de pago adjuntado
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-0.5 leading-snug">
+                      El administrador revisará este comprobante para habilitar tu acceso.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {feedback && (
                 <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
@@ -771,22 +842,6 @@ export function AccessLobby({
                 </h2>
               </div>
 
-              {selectedPlan === 'subscription' && config.paymentInstructions && (
-                <div className="rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950/60 p-4 space-y-1.5">
-                  <div className="text-xs font-semibold text-slate-800 dark:text-zinc-200">
-                    Cómo realizar tu pago mensual
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-zinc-300 whitespace-pre-line leading-relaxed">
-                    {config.paymentInstructions}
-                  </p>
-                  {config.supportContact && (
-                    <p className="text-[11px] text-slate-500 dark:text-zinc-400 pt-1">
-                      Contacto: <span className="font-medium">{config.supportContact}</span>
-                    </p>
-                  )}
-                </div>
-              )}
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
@@ -818,20 +873,15 @@ export function AccessLobby({
               </div>
 
               {selectedPlan === 'subscription' && (
-                <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-zinc-300 mb-1">
-                    Número de referencia o comprobante de pago
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={200}
-                    value={paymentReference}
-                    onChange={(e) => setPaymentReference(e.target.value)}
-                    placeholder="Ej. Ref #4821 · Pago Móvil / Zelle / Binance"
-                    className="w-full min-h-[40px] px-3 py-2 rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/70 dark:bg-zinc-950 text-xs text-slate-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-                  />
-                </div>
+                <PaymentMethodsPanel
+                  config={config}
+                  selectedMethod={paymentMethod}
+                  onSelectMethod={setPaymentMethod}
+                  paymentProofUrl={paymentProofUrl}
+                  onChangePaymentProof={setPaymentProofUrl}
+                  paymentReference={paymentReference}
+                  onChangePaymentReference={setPaymentReference}
+                />
               )}
 
               <div>

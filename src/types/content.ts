@@ -65,6 +65,8 @@ export interface MediaItem {
   name: string;
   type: 'image' | 'video';
   url: string;
+  thumbnailUrl?: string;
+  fileSizeMB?: number;
 }
 
 export interface ChecklistItem {

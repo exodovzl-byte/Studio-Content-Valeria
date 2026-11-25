@@ -2,16 +2,17 @@
 
 ## 1. Data Invariants
 
-1. **Zero Self-Approval**: A regular user can only create or update their own `/accounts/{userId}` document into `unassigned`, `pending_trial`, or `pending_subscription`. Only an administrator (`isAdmin()`) may set `accessStatus` to `trial_active`, `subscription_active`, `rejected`, or `suspended`, or modify `accessExpiresAt`, `hasUsedTrial`, `trialDaysGranted`, `approvedAt`, or `adminNote`.
+1. **Zero Self-Approval**: A regular user can only create or update their own `/accounts/{userId}` document into `unassigned`, `pending_trial`, or `pending_subscription`. Only an administrator (`isAdmin()`) may set `accessStatus` to `trial_active`, `subscription_active`, `permanent_active`, `rejected`, or `suspended`, modify `accessExpiresAt`, `hasUsedTrial`, `trialDaysGranted`, `approvedAt`, or `adminNote`, or delete user accounts.
 2. **One-Time Trial Guard**: Once `hasUsedTrial == true`, a user cannot submit `accessStatus: 'pending_trial'` again; they may only request `pending_subscription`.
-3. **Server-Enforced Expiration Gate**: Workspace reads (`get`) and writes (`create`, `update`, `delete`) on `/users/{userId}`, `/users/{userId}/brands/{brandId}`, and `/users/{userId}/posts/{postId}` require `hasActiveAccess(userId)`, which checks either `isAdmin()` or that `/accounts/{userId}` has `accessStatus in ['trial_active', 'subscription_active']` AND `accessExpiresAt > request.time`.
+3. **Server-Enforced Expiration Gate**: Workspace reads (`get`) and writes (`create`, `update`, `delete`) on `/users/{userId}`, `/users/{userId}/brands/{brandId}`, and `/users/{userId}/posts/{postId}` require `hasActiveAccess(userId)`, which checks either `isAdmin()`, or `/accounts/{userId}` has `accessStatus == 'permanent_active'`, or `accessStatus in ['trial_active', 'subscription_active']` AND `accessExpiresAt > request.time`.
 4. **Strict PII Isolation**: `/accounts/{userId}` contains `email`; `get` is strictly restricted to `isOwner(userId) || isAdmin()`, and `list` is strictly restricted to the verified bootstrap administrator.
 5. **Admin-Only Configuration & PIN Security**:
-   - `/appConfig/access` is readable (`get`) for live lobby display and writable exclusively by `isAdmin()`.
+   - `/appConfig/access` (including Binance and Pago Móvil payment details) is readable (`get`) for live lobby display and writable exclusively by `isAdmin()`.
    - `/adminSecurity/pin` stores ONLY the salted SHA-256 hash (`pinHash`, `pinSalt`, `pinLength` in `[4, 6]`, `updatedAt`) and is readable/writable **exclusively** by `isAdmin()` (never readable by regular or unauthenticated users).
-6. **Legacy Account Discovery & Verified Email Sync**: `/users/{userId}` (which contains no PII) allows `get` and `list` by `isBootstrapAdmin()` so previously registered workspaces appear in the Admin Dashboard. If an admin pre-registers a legacy account with placeholder email `pendiente@sincronizar.app`, the verified owner may sync only their own `request.auth.token.email` and `displayName` without touching any access status or expiration fields.
-7. **Verified Identity & Immutability**: All authenticated operations require `request.auth.token.email_verified == true`. `uid`, `ownerId`, and `createdAt` are immutable after creation; `createdAt` and `updatedAt` must equal `request.time`.
-8. **Referential Integrity**: Posts must reference an existing brand via `existsAfter` and an existing parent workspace via `exists`.
+6. **Bounded Payment Proof Uploads**: A user may attach `paymentMethod` (`none`, `binance`, `pago_movil`, `other`) and a compressed `paymentProofUrl` (`<= 250000` chars) ONLY on their own `/accounts/{userId}` document during a subscription or early-renewal request, without ever elevating their own `accessStatus` or `accessExpiresAt`. Payment proofs remain strictly private (`isOwner(userId) || isAdmin()`).
+7. **Legacy Account Discovery & Verified Email Sync**: `/users/{userId}` (which contains no PII) allows `get` and `list` by `isBootstrapAdmin()` so previously registered workspaces appear in the Admin Dashboard. If an admin pre-registers a legacy account with placeholder email `pendiente@sincronizar.app`, the verified owner may sync only their own `request.auth.token.email` and `displayName` without touching any access status or expiration fields.
+8. **Verified Identity & Immutability**: All authenticated operations require `request.auth.token.email_verified == true`. `uid`, `ownerId`, and `createdAt` are immutable after creation; `createdAt` and `updatedAt` must equal `request.time`.
+9. **Referential Integrity**: Posts must reference an existing brand via `existsAfter` and an existing parent workspace via `exists`.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads (Must All Return PERMISSION_DENIED)
 

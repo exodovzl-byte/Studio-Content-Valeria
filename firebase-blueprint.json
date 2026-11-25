@@ -75,6 +75,68 @@
           "maxLength": 160,
           "description": "Contact email, WhatsApp, or URL for user assistance."
         },
+        "binanceEnabled": {
+          "type": "boolean",
+          "description": "Whether Binance Pay is displayed as a payment option."
+        },
+        "binancePayId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100,
+          "description": "Admin Binance Pay ID or UID."
+        },
+        "binanceEmail": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 180,
+          "description": "Admin Binance account email."
+        },
+        "binanceHolder": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Admin Binance account holder name or nickname."
+        },
+        "binanceNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Additional Binance payment instructions or accepted network."
+        },
+        "pagoMovilEnabled": {
+          "type": "boolean",
+          "description": "Whether Pago Móvil is displayed as a payment option."
+        },
+        "pagoMovilBank": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 100,
+          "description": "Bank name and code for Pago Móvil."
+        },
+        "pagoMovilPhone": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "Phone number registered for Pago Móvil."
+        },
+        "pagoMovilId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40,
+          "description": "National ID (Cédula/RIF) registered for Pago Móvil."
+        },
+        "pagoMovilHolder": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Account holder name for Pago Móvil."
+        },
+        "pagoMovilNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Additional Pago Móvil instructions such as exchange rate notes."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
@@ -136,6 +198,7 @@
             "pending_subscription",
             "trial_active",
             "subscription_active",
+            "permanent_active",
             "rejected",
             "suspended"
           ],
@@ -164,6 +227,17 @@
           "minLength": 0,
           "maxLength": 200,
           "description": "Payment reference or confirmation note submitted by the user."
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["none", "binance", "pago_movil", "other"],
+          "description": "Payment method used by the client for their subscription."
+        },
+        "paymentProofUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250000,
+          "description": "Compressed JPEG data URL of the payment screenshot uploaded by the client."
         },
         "userNote": {
           "type": "string",

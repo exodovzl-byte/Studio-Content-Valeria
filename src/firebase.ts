@@ -99,34 +99,49 @@ export function compressImageFile(
       const rawDataUrl =
         typeof reader.result === 'string' ? reader.result : '';
       if (!rawDataUrl) {
-        resolve(URL.createObjectURL(file));
+        resolve('');
         return;
       }
 
       const img = new Image();
       img.onload = () => {
-        const scale = Math.min(
-          1,
-          maxDimension / Math.max(img.width || 1, img.height || 1)
-        );
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          resolve(rawDataUrl.slice(0, 240000));
-          return;
+        const renderAt = (targetMax: number, q: number): string => {
+          const scale = Math.min(
+            1,
+            targetMax / Math.max(img.width || 1, img.height || 1)
+          );
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return '';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          return canvas.toDataURL('image/jpeg', q);
+        };
+
+        const attempts: Array<[number, number]> = [
+          [maxDimension, quality],
+          [maxDimension, 0.6],
+          [Math.round(maxDimension * 0.78), 0.55],
+          [Math.round(maxDimension * 0.6), 0.48],
+          [540, 0.45],
+        ];
+
+        for (const [dim, q] of attempts) {
+          const candidate = renderAt(dim, q);
+          if (candidate && candidate.length <= 245000) {
+            resolve(candidate);
+            return;
+          }
         }
-        ctx.drawImage(img, 0, 0, w, h);
-        let compressed = canvas.toDataURL('image/jpeg', quality);
-        if (compressed.length > 220000) {
-          compressed = canvas.toDataURL('image/jpeg', 0.55);
-        }
-        resolve(compressed.length <= 245000 ? compressed : '');
+        resolve('');
       };
-      img.onerror = () => resolve(rawDataUrl.length <= 245000 ? rawDataUrl : '');
+      img.onerror = () =>
+        resolve(rawDataUrl.length <= 245000 ? rawDataUrl : '');
       img.src = rawDataUrl;
     };
     reader.onerror = () => resolve('');

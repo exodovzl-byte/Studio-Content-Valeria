@@ -34,10 +34,15 @@ import {
   SocialPreviewNetwork,
 } from './components/GridPreviewView';
 import { KanbanBoard } from './components/KanbanBoard';
+import {
+  NotificationCenter,
+  NotificationPermissionButton,
+} from './components/NotificationCenter';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { PWAStatusBanner } from './components/PWAStatusBanner';
 import { ProfileEditorModal } from './components/ProfileEditorModal';
 import { RenewalModal } from './components/RenewalModal';
+import { useRealtimeNotifications } from './hooks/useRealtimeNotifications';
 import {
   BRANDS,
   INITIAL_POSTS,
@@ -48,7 +53,9 @@ import { auth, googleProvider } from './firebase';
 import {
   adminApproveSubscription,
   adminApproveTrial,
+  adminDeleteAccount,
   adminDenyAccount,
+  adminGrantPermanent,
   adminUpdateAccount,
   checkIsAdmin,
   ensureUserAccount,
@@ -215,6 +222,34 @@ export default function App() {
   );
   const pendingPostSaves = useRef<Record<string, ContentPost>>({});
   const pendingBrandSaves = useRef<Record<string, Brand>>({});
+  const lastServerRefreshRef = useRef<number>(0);
+
+  const {
+    notifications,
+    permissionStatus: notificationPermission,
+    requestBrowserPermission,
+    dismissNotification,
+  } = useRealtimeNotifications({
+    userUid: user?.uid ?? null,
+    isAdmin,
+    allAccounts,
+    userAccount,
+    nowTick,
+    onOpenAdminFromNotification: () => {
+      if (!isAdmin) return;
+      if (adminPinUnlocked) {
+        setAdminModeOpen(true);
+      } else {
+        setEnteredStudioAsAdmin(false);
+        setAdminPinModalOpen(true);
+      }
+    },
+    onOpenRenewalFromNotification: () => {
+      if (!isAdmin && userAccount && userAccount.accessStatus !== 'permanent_active') {
+        setRenewalModalOpen(true);
+      }
+    },
+  });
 
   // Subscribe to public Lobby / Trial / Monthly Subscription config in real time
   useEffect(() => {
@@ -475,15 +510,22 @@ export default function App() {
         }
       });
 
-    // Pull latest server state whenever the user returns to the app or switches tabs
+    // Pull latest server state periodically (5-min cooldown) when returning to the app;
+    // real-time onSnapshot listeners already keep data synced without redundant reads.
+    const FOREGROUND_REFRESH_COOLDOWN_MS = 5 * 60_000;
     const handleForegroundRefresh = () => {
       if (document.visibilityState === 'hidden' || cancelled) return;
+      const now = Date.now();
+      if (now - lastServerRefreshRef.current < FOREGROUND_REFRESH_COOLDOWN_MS) {
+        return;
+      }
       if (
         Object.keys(pendingPostSaves.current).length > 0 ||
         Object.keys(pendingBrandSaves.current).length > 0
       ) {
         return;
       }
+      lastServerRefreshRef.current = now;
       refreshWorkspaceFromServer(user.uid)
         .then(({ brands: serverBrands, posts: serverPosts }) => {
           if (cancelled) return;
@@ -609,6 +651,10 @@ export default function App() {
     return () => {
       window.removeEventListener('pagehide', flushPending);
       document.removeEventListener('visibilitychange', handleVisibility);
+      Object.values(postSyncTimers.current).forEach(clearTimeout);
+      Object.values(brandSyncTimers.current).forEach(clearTimeout);
+      postSyncTimers.current = {};
+      brandSyncTimers.current = {};
     };
   }, []);
 
@@ -1228,6 +1274,12 @@ export default function App() {
             config={accessConfig}
             adminEmail={user?.email || ''}
             pinConfig={adminPinConfig}
+            notificationControl={
+              <NotificationPermissionButton
+                status={notificationPermission}
+                onRequest={requestBrowserPermission}
+              />
+            }
             onBackToStudio={() => {
               setAdminModeOpen(false);
               setEnteredStudioAsAdmin(true);
@@ -1245,10 +1297,16 @@ export default function App() {
             }}
             onApproveTrial={adminApproveTrial}
             onApproveSubscription={adminApproveSubscription}
+            onGrantPermanent={adminGrantPermanent}
             onUpdateAccount={adminUpdateAccount}
             onDenyAccount={adminDenyAccount}
+            onDeleteAccount={adminDeleteAccount}
           />
         </main>
+        <NotificationCenter
+          notifications={notifications}
+          onDismiss={dismissNotification}
+        />
         <PWAStatusBanner />
       </div>
     );
@@ -1276,6 +1334,12 @@ export default function App() {
           authHint={authHint}
           isAdmin={isAdmin}
           pendingAdminCount={pendingAdminCount}
+          notificationControl={
+            <NotificationPermissionButton
+              status={notificationPermission}
+              onRequest={requestBrowserPermission}
+            />
+          }
           onToggleTheme={() => setDarkMode((d) => !d)}
           onSignIn={handleSignIn}
           onSignOut={handleSignOut}
@@ -1320,24 +1384,35 @@ export default function App() {
             }}
           />
         )}
+
+        <NotificationCenter
+          notifications={notifications}
+          onDismiss={dismissNotification}
+        />
       </>
     );
   }
 
+  const isPermanentUser =
+    !isAdmin && userAccount?.accessStatus === 'permanent_active';
+
   const userDaysLeft =
-    !isAdmin && userAccount
+    !isAdmin && userAccount && !isPermanentUser
       ? getDaysRemaining(userAccount.accessExpiresAtMs, nowTick)
       : null;
 
   const userPlanSummary =
     !isAdmin && userAccount
-      ? `${
-          userAccount.accessStatus === 'trial_active' ? 'Prueba' : 'Suscripción'
-        } · ${userDaysLeft}d (vence ${formatDateShort(userAccount.accessExpiresAtMs)})`
+      ? isPermanentUser
+        ? 'Suscripción permanente · Sin vencimiento'
+        : `${
+            userAccount.accessStatus === 'trial_active' ? 'Prueba' : 'Suscripción'
+          } · ${userDaysLeft}d (vence ${formatDateShort(userAccount.accessExpiresAtMs)})`
       : null;
 
   const showExpiringSoonBanner =
     !isAdmin &&
+    !isPermanentUser &&
     userAccount !== null &&
     userDaysLeft !== null &&
     userDaysLeft <= 5;
@@ -1388,7 +1463,9 @@ export default function App() {
               onSignIn={handleSignIn}
               onSignOut={handleSignOut}
               planSummary={userPlanSummary}
-              onOpenRenewal={() => setRenewalModalOpen(true)}
+              onOpenRenewal={
+                isPermanentUser ? undefined : () => setRenewalModalOpen(true)
+              }
             />
 
             <button
@@ -1611,6 +1688,11 @@ export default function App() {
               </button>
             )}
 
+            <NotificationPermissionButton
+              status={notificationPermission}
+              onRequest={requestBrowserPermission}
+            />
+
             <PWAInstallButton />
 
             {activeView !== 'grid' && (
@@ -1827,6 +1909,12 @@ export default function App() {
           if (!user) return;
           await submitSubscriptionRequest(user.uid, userAccount, data);
         }}
+      />
+
+      {/* Real-time Admin & Client Notifications */}
+      <NotificationCenter
+        notifications={notifications}
+        onDismiss={dismissNotification}
       />
 
       {/* PWA Auto-Update & Offline Status */}

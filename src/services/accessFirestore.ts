@@ -2,6 +2,7 @@ import {
   Timestamp,
   Unsubscribe,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
@@ -18,6 +19,7 @@ import {
   BOOTSTRAP_ADMIN_EMAIL,
   DEFAULT_ACCESS_CONFIG,
   LEGACY_PLACEHOLDER_EMAIL,
+  PaymentMethod,
   UserAccount,
   isAccountAccessActive,
 } from '../types/access';
@@ -333,8 +335,73 @@ function mapAccessConfig(raw: Record<string, unknown> | undefined): AccessConfig
       160,
       DEFAULT_ACCESS_CONFIG.supportContact
     ),
+    binanceEnabled:
+      typeof raw.binanceEnabled === 'boolean'
+        ? raw.binanceEnabled
+        : DEFAULT_ACCESS_CONFIG.binanceEnabled,
+    binancePayId: sanitizeString(
+      raw.binancePayId,
+      100,
+      DEFAULT_ACCESS_CONFIG.binancePayId
+    ),
+    binanceEmail: sanitizeString(
+      raw.binanceEmail,
+      180,
+      DEFAULT_ACCESS_CONFIG.binanceEmail
+    ),
+    binanceHolder: sanitizeString(
+      raw.binanceHolder,
+      120,
+      DEFAULT_ACCESS_CONFIG.binanceHolder
+    ),
+    binanceNote: sanitizeString(
+      raw.binanceNote,
+      300,
+      DEFAULT_ACCESS_CONFIG.binanceNote
+    ),
+    pagoMovilEnabled:
+      typeof raw.pagoMovilEnabled === 'boolean'
+        ? raw.pagoMovilEnabled
+        : DEFAULT_ACCESS_CONFIG.pagoMovilEnabled,
+    pagoMovilBank: sanitizeString(
+      raw.pagoMovilBank,
+      100,
+      DEFAULT_ACCESS_CONFIG.pagoMovilBank
+    ),
+    pagoMovilPhone: sanitizeString(
+      raw.pagoMovilPhone,
+      40,
+      DEFAULT_ACCESS_CONFIG.pagoMovilPhone
+    ),
+    pagoMovilId: sanitizeString(
+      raw.pagoMovilId,
+      40,
+      DEFAULT_ACCESS_CONFIG.pagoMovilId
+    ),
+    pagoMovilHolder: sanitizeString(
+      raw.pagoMovilHolder,
+      120,
+      DEFAULT_ACCESS_CONFIG.pagoMovilHolder
+    ),
+    pagoMovilNote: sanitizeString(
+      raw.pagoMovilNote,
+      300,
+      DEFAULT_ACCESS_CONFIG.pagoMovilNote
+    ),
     updatedAtMs: timestampToMs(raw.updatedAt),
   };
+}
+
+function sanitizePaymentMethod(value: unknown): PaymentMethod {
+  if (
+    value === 'binance' ||
+    value === 'pago_movil' ||
+    value === 'other' ||
+    value === 'none'
+  ) {
+    return value;
+  }
+  return 'none';
 }
 
 function mapUserAccount(
@@ -359,6 +426,9 @@ function mapUserAccount(
     accessExpiresAtMs: timestampToMs(raw.accessExpiresAt),
     paymentReference:
       typeof raw.paymentReference === 'string' ? raw.paymentReference : '',
+    paymentMethod: sanitizePaymentMethod(raw.paymentMethod),
+    paymentProofUrl:
+      typeof raw.paymentProofUrl === 'string' ? raw.paymentProofUrl : '',
     userNote: typeof raw.userNote === 'string' ? raw.userNote : '',
     adminNote: typeof raw.adminNote === 'string' ? raw.adminNote : '',
     requestedAtMs: timestampToMs(raw.requestedAt),
@@ -446,6 +516,17 @@ export async function saveAccessConfig(config: AccessConfig): Promise<void> {
     subscriptionFeatures: cleanFeatures,
     paymentInstructions: sanitizeString(config.paymentInstructions, 1000),
     supportContact: sanitizeString(config.supportContact, 160),
+    binanceEnabled: Boolean(config.binanceEnabled),
+    binancePayId: sanitizeString(config.binancePayId, 100).trim(),
+    binanceEmail: sanitizeString(config.binanceEmail, 180).trim(),
+    binanceHolder: sanitizeString(config.binanceHolder, 120).trim(),
+    binanceNote: sanitizeString(config.binanceNote, 300).trim(),
+    pagoMovilEnabled: Boolean(config.pagoMovilEnabled),
+    pagoMovilBank: sanitizeString(config.pagoMovilBank, 100).trim(),
+    pagoMovilPhone: sanitizeString(config.pagoMovilPhone, 40).trim(),
+    pagoMovilId: sanitizeString(config.pagoMovilId, 40).trim(),
+    pagoMovilHolder: sanitizeString(config.pagoMovilHolder, 120).trim(),
+    pagoMovilNote: sanitizeString(config.pagoMovilNote, 300).trim(),
     updatedAt: serverTimestamp(),
   };
 
@@ -513,6 +594,8 @@ export async function ensureUserAccount(
       trialDaysGranted: 0,
       accessExpiresAt: null,
       paymentReference: '',
+      paymentMethod: 'none',
+      paymentProofUrl: '',
       userNote: '',
       adminNote: '',
       requestedAt: null,
@@ -540,6 +623,8 @@ export async function ensureUserAccount(
       trialDaysGranted: 0,
       accessExpiresAtMs: null,
       paymentReference: '',
+      paymentMethod: 'none',
+      paymentProofUrl: '',
       userNote: '',
       adminNote: '',
       requestedAtMs: null,
@@ -620,12 +705,16 @@ export async function submitSubscriptionRequest(
   data: {
     displayName: string;
     businessName: string;
+    paymentMethod: PaymentMethod;
     paymentReference: string;
+    paymentProofUrl: string;
     userNote: string;
   }
 ): Promise<void> {
   const path = `accounts/${uid}`;
   const isCurrentlyActive = isAccountAccessActive(currentAccount);
+  const safeMethod = sanitizePaymentMethod(data.paymentMethod);
+  const safeProof = sanitizeString(data.paymentProofUrl, 250000);
 
   try {
     if (isCurrentlyActive) {
@@ -633,7 +722,9 @@ export async function submitSubscriptionRequest(
         displayName: sanitizeString(data.displayName, 120).trim(),
         businessName: sanitizeString(data.businessName, 120).trim(),
         requestedPlan: 'subscription',
+        paymentMethod: safeMethod,
         paymentReference: sanitizeString(data.paymentReference, 200).trim(),
+        paymentProofUrl: safeProof,
         userNote: sanitizeString(data.userNote, 400).trim(),
         requestedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -644,7 +735,9 @@ export async function submitSubscriptionRequest(
         businessName: sanitizeString(data.businessName, 120).trim(),
         accessStatus: 'pending_subscription',
         requestedPlan: 'subscription',
+        paymentMethod: safeMethod,
         paymentReference: sanitizeString(data.paymentReference, 200).trim(),
+        paymentProofUrl: safeProof,
         userNote: sanitizeString(data.userNote, 400).trim(),
         requestedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -703,6 +796,8 @@ export function subscribeToAllAccounts(
         trialDaysGranted: 0,
         accessExpiresAtMs: null,
         paymentReference: '',
+        paymentMethod: 'none',
+        paymentProofUrl: '',
         userNote: '',
         adminNote: '',
         requestedAtMs: null,
@@ -809,6 +904,8 @@ function buildAdminCreatePayload(
       ? Timestamp.fromMillis(account.accessExpiresAtMs)
       : null,
     paymentReference: sanitizeString(account.paymentReference, 200),
+    paymentMethod: sanitizePaymentMethod(account.paymentMethod),
+    paymentProofUrl: sanitizeString(account.paymentProofUrl, 250000),
     userNote: sanitizeString(account.userNote, 400),
     adminNote: sanitizeString(account.adminNote, 400),
     requestedAt: account.requestedAtMs
@@ -895,6 +992,23 @@ export async function adminApproveSubscription(
   });
 }
 
+export async function adminGrantPermanent(
+  account: UserAccount,
+  adminNote?: string
+): Promise<void> {
+  await upsertAccountAsAdmin(account, {
+    accessStatus: 'permanent_active',
+    requestedPlan: 'none',
+    accessExpiresAt: null,
+    adminNote: sanitizeString(
+      adminNote !== undefined ? adminNote : account.adminNote,
+      400
+    ),
+    approvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function adminUpdateAccount(
   account: UserAccount,
   updates: {
@@ -908,16 +1022,20 @@ export async function adminUpdateAccount(
 ): Promise<void> {
   const isGrantingActive =
     updates.accessStatus === 'trial_active' ||
-    updates.accessStatus === 'subscription_active';
+    updates.accessStatus === 'subscription_active' ||
+    updates.accessStatus === 'permanent_active';
 
   const patch: Record<string, unknown> = {
     accessStatus: updates.accessStatus,
     requestedPlan: isGrantingActive ? 'none' : account.requestedPlan,
     hasUsedTrial: Boolean(updates.hasUsedTrial),
     trialDaysGranted: clampNumber(updates.trialDaysGranted, 0, 365, 0),
-    accessExpiresAt: updates.accessExpiresAt
-      ? Timestamp.fromDate(updates.accessExpiresAt)
-      : null,
+    accessExpiresAt:
+      updates.accessStatus === 'permanent_active'
+        ? null
+        : updates.accessExpiresAt
+          ? Timestamp.fromDate(updates.accessExpiresAt)
+          : null,
     adminNote: sanitizeString(updates.adminNote, 400).trim(),
     approvedAt: isGrantingActive
       ? serverTimestamp()
@@ -948,4 +1066,21 @@ export async function adminDenyAccount(
     ),
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function adminDeleteAccount(account: UserAccount): Promise<void> {
+  if (account.isAdminAccount) return;
+  const accountPath = `accounts/${account.uid}`;
+  try {
+    await deleteDoc(doc(db, 'accounts', account.uid));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, accountPath);
+  }
+
+  // Also remove root workspace doc if present so legacy users do not reappear
+  try {
+    await deleteDoc(doc(db, 'users', account.uid));
+  } catch {
+    // Ignore if workspace doc does not exist
+  }
 }
